@@ -1,0 +1,248 @@
+@import url('https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;0,6..72,700;1,6..72,500&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+/* =====================================================================
+   TOKENS — "Cofre" é pensado como um velho baú de família: madeira,
+   ferragens de latão, forro esverdeado (verdigris), papel de razão
+   (ledger) por dentro. A ideia é que abrir o app pareça abrir esse baú:
+   caloroso, íntimo, confiável — não um dashboard fintech genérico.
+   ===================================================================== */
+:root{
+  --paper:#F6EFE1;        /* fundo geral — papel envelhecido */
+  --paper-card:#FFFCF4;   /* superfície de cartão — página limpa do razão */
+  --paper-sunken:#EFE5D0; /* áreas rebaixadas (inputs, trilhos) */
+  --ink:#2B2118;          /* texto principal — tinta marrom escura */
+  --ink-soft:#7C6C55;     /* texto secundário */
+  --rule:#E3D5B8;         /* linhas/divisórias — borda de papel envelhecido */
+  --brass:#B8863C;        /* latão — ação primária, destaque */
+  --brass-deep:#8C6428;   /* latão em hover/pressed */
+  --brass-tint:#F3E4C4;   /* superfície clara com tom de latão */
+  --verdigris:#3F7D63;    /* positivo / crescimento — cobre oxidado */
+  --verdigris-tint:#E3EFE6;
+  --garnet:#A6432F;       /* negativo / alerta — lacre de cera */
+  --garnet-tint:#F5E1DA;
+  --radius:14px;
+  --radius-lg:20px;
+  --shadow-card: 0 1px 2px rgba(43,33,24,0.05), 0 8px 24px -12px rgba(43,33,24,0.18);
+  --shadow-pop: 0 12px 32px -8px rgba(43,33,24,0.28);
+}
+
+*{box-sizing:border-box; margin:0; padding:0;}
+html{-webkit-text-size-adjust:100%;}
+body{
+  background:
+    radial-gradient(1200px 600px at 100% -10%, #fffaf0 0%, transparent 60%),
+    var(--paper);
+  color:var(--ink);
+  font-family:'Inter',-apple-system,BlinkMacSystemFont,sans-serif;
+  min-height:100vh;
+  -webkit-font-smoothing:antialiased;
+  line-height:1.45;
+}
+h1,h2,h3,.display{font-family:'Newsreader',Georgia,serif; font-weight:600; letter-spacing:-0.01em;}
+.mono, .amount, input[type="number"]{font-family:'IBM Plex Mono', ui-monospace, monospace; font-variant-numeric:tabular-nums;}
+
+a{color:inherit;}
+:focus-visible{outline:2.5px solid var(--brass); outline-offset:2px; border-radius:6px;}
+@media (prefers-reduced-motion: reduce){
+  *{animation-duration:0.01ms !important; animation-iteration-count:1 !important; transition-duration:0.01ms !important;}
+}
+
+/* =====================================================================
+   BRAND MARK — um dial de fechadura de baú, usado como logomarca.
+   ===================================================================== */
+.brand{display:flex; align-items:center; gap:9px; font-family:'Newsreader',serif; font-size:21px; font-weight:600; padding:6px 12px 22px 12px; color:var(--ink);}
+.brand-mark{width:26px; height:26px; flex-shrink:0;}
+.brand .accent{color:var(--brass);}
+
+/* =====================================================================
+   LAYOUT
+   ===================================================================== */
+.app{display:flex; min-height:100vh;}
+.sidebar{width:232px; flex-shrink:0; background:var(--paper-card); border-right:1px solid var(--rule); padding:22px 14px; display:flex; flex-direction:column; gap:3px;}
+.nav-btn{display:flex; align-items:center; gap:10px; width:100%; padding:10.5px 12px; border-radius:10px; border:none; background:transparent; color:var(--ink-soft); font-size:14px; font-weight:500; text-align:left; cursor:pointer; transition:background .15s,color .15s; font-family:'Inter',sans-serif;}
+.nav-btn:hover{background:var(--paper-sunken); color:var(--ink);}
+.nav-btn.active{background:var(--brass-tint); color:var(--brass-deep); font-weight:600;}
+.nav-icon{width:18px; text-align:center; font-size:15px;}
+.main{flex:1; padding:30px 36px 64px; max-width:1120px; overflow-x:hidden;}
+.topbar{display:flex; justify-content:space-between; align-items:flex-end; margin-bottom:24px; flex-wrap:wrap; gap:12px;}
+.topbar h1{font-size:27px; font-weight:600;}
+.month-picker{display:flex; align-items:center; gap:10px; background:var(--paper-card); border:1px solid var(--rule); border-radius:10px; padding:7px 6px;}
+.month-picker button{background:none; border:none; color:var(--ink-soft); cursor:pointer; font-size:16px; padding:2px 8px; border-radius:6px;}
+.month-picker button:hover{color:var(--brass-deep); background:var(--brass-tint);}
+.month-picker .label{font-size:13.5px; font-weight:600; min-width:118px; text-align:center; text-transform:capitalize; font-family:'Newsreader',serif;}
+
+.grid{display:grid; gap:16px;}
+.grid-4{grid-template-columns:repeat(4,1fr);}
+.grid-3{grid-template-columns:repeat(3,1fr);}
+.grid-2{grid-template-columns:repeat(2,1fr);}
+@media(max-width:900px){.grid-4{grid-template-columns:repeat(2,1fr);} .grid-3{grid-template-columns:repeat(2,1fr);} .grid-2{grid-template-columns:1fr;}}
+
+/* "Página de razão" — cartão com friso duplo no topo lembrando o
+   carimbo/linha de corte de um livro-caixa antigo. */
+.card{
+  background:var(--paper-card); border:1px solid var(--rule); border-radius:var(--radius);
+  padding:20px; position:relative; box-shadow:var(--shadow-card);
+}
+.stat-label{font-size:11.5px; color:var(--ink-soft); text-transform:uppercase; letter-spacing:0.7px; margin-bottom:8px; font-weight:600;}
+.stat-value{font-size:25px; font-weight:600; font-family:'Newsreader',serif;}
+section{margin-bottom:32px;}
+.section-head{display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; flex-wrap:wrap; gap:10px;}
+.section-head h2{font-size:18.5px; font-weight:600;}
+.sub{font-size:12.5px; color:var(--ink-soft); margin-top:2px;}
+
+.btn{background:var(--brass); color:#2A1D0C; border:none; border-radius:9px; padding:9.5px 17px; font-weight:600; font-size:13.5px; cursor:pointer; transition:background .15s, transform .1s; font-family:'Inter',sans-serif;}
+.btn:hover{background:var(--brass-deep); color:#fff;}
+.btn:active{transform:translateY(1px);}
+.btn.secondary{background:transparent; border:1px solid var(--rule); color:var(--ink);}
+.btn.secondary:hover{background:var(--paper-sunken); color:var(--ink);}
+.btn.gold{background:var(--brass); color:#2A1D0C;}
+.btn.danger{background:transparent; border:1px solid var(--garnet); color:var(--garnet); padding:6px 10px; font-size:12px;}
+.btn.danger:hover{background:var(--garnet-tint);}
+.btn.small{padding:6px 11px; font-size:12.5px;}
+.btn:disabled{opacity:0.42; cursor:not-allowed;}
+
+.row-list{display:flex; flex-direction:column; gap:8px;}
+.item-row{display:flex; align-items:center; justify-content:space-between; gap:12px; background:var(--paper-card); border:1px solid var(--rule); border-radius:11px; padding:12px 14px; flex-wrap:wrap; transition:box-shadow .15s;}
+.item-row:hover{box-shadow:var(--shadow-card);}
+.item-left{display:flex; align-items:center; gap:12px; min-width:0;}
+.item-tag{font-size:10.5px; padding:3px 8px; border-radius:20px; font-weight:700; text-transform:uppercase; letter-spacing:0.4px; flex-shrink:0;}
+.tag-entrada{background:var(--verdigris-tint); color:var(--verdigris);}
+.tag-saida{background:var(--garnet-tint); color:var(--garnet);}
+.item-desc{font-size:14px; font-weight:600;}
+.item-meta{font-size:12px; color:var(--ink-soft);}
+.item-amount{font-weight:700; font-size:14.5px; flex-shrink:0;}
+.icon-btn{background:none; border:none; color:var(--ink-soft); cursor:pointer; font-size:14px; padding:4px 6px; border-radius:6px;}
+.icon-btn:hover{background:var(--garnet-tint); color:var(--garnet);}
+
+.empty{color:var(--ink-soft); font-size:13.5px; padding:26px 20px; text-align:center; border:1.5px dashed var(--rule); border-radius:var(--radius); background:repeating-linear-gradient(135deg, transparent, transparent 10px, rgba(184,134,60,0.035) 10px, rgba(184,134,60,0.035) 20px);}
+.empty .empty-title{font-family:'Newsreader',serif; font-size:15.5px; color:var(--ink); font-weight:600; margin-bottom:4px; display:block;}
+
+/* =====================================================================
+   DICA DO COFRE — componente educativo, aparece contextualmente em
+   cada aba com uma dica curta e prática, no tom de alguém experiente
+   te dando um toque, não de manual técnico.
+   ===================================================================== */
+.tip-card{
+  display:flex; gap:12px; align-items:flex-start;
+  background:linear-gradient(135deg, var(--verdigris-tint) 0%, var(--paper-card) 70%);
+  border:1px solid #CFE0D6; border-left:3px solid var(--verdigris);
+  border-radius:12px; padding:13px 16px; margin-bottom:22px;
+}
+.tip-icon{flex-shrink:0; width:30px; height:30px; border-radius:50%; background:var(--paper-card); border:1px solid #CFE0D6; display:flex; align-items:center; justify-content:center; font-size:15px;}
+.tip-label{font-size:10.5px; text-transform:uppercase; letter-spacing:0.6px; font-weight:700; color:var(--verdigris); margin-bottom:3px;}
+.tip-text{font-size:13px; color:var(--ink); line-height:1.5;}
+
+/* =====================================================================
+   GAUGE — mostrador de latão (semicírculo) que resume a saúde
+   financeira do mês num relance, como o mostrador de um cofre.
+   ===================================================================== */
+.gauge-wrap{display:flex; align-items:center; gap:22px; flex-wrap:wrap;}
+.gauge-svg{width:180px; height:100px; flex-shrink:0;}
+.gauge-needle{transform-origin:90px 90px; transition:transform 1s cubic-bezier(.22,1.4,.36,1);}
+.gauge-caption{flex:1; min-width:180px;}
+.gauge-status{font-family:'Newsreader',serif; font-size:21px; font-weight:600; margin-bottom:4px;}
+.gauge-detail{font-size:12.5px; color:var(--ink-soft); line-height:1.55;}
+
+.jar-grid{display:grid; grid-template-columns:repeat(3,1fr); gap:16px;}
+@media(max-width:900px){.jar-grid{grid-template-columns:repeat(2,1fr);}}
+@media(max-width:600px){.jar-grid{grid-template-columns:1fr;}}
+.jar-card{background:var(--paper-card); border:1px solid var(--rule); border-radius:18px; padding:18px; display:flex; flex-direction:column; gap:12px; position:relative; box-shadow:var(--shadow-card);}
+.jar-card.jar-complete{border-color:var(--brass);}
+.jar-visual{width:100%; height:92px; border-radius:12px; position:relative; overflow:hidden; background:var(--paper-sunken); border:1px solid var(--rule);}
+.jar-fill{position:absolute; bottom:0; left:0; right:0; background:linear-gradient(180deg, var(--brass) 0%, var(--brass-deep) 100%); transition:height .7s cubic-bezier(.34,1.56,.64,1); border-radius:0 0 11px 11px;}
+.jar-fill::before{content:''; position:absolute; top:0; left:0; right:0; height:3px; background:rgba(255,255,255,0.35);}
+.jar-pct{position:absolute; top:8px; right:10px; font-size:11px; font-weight:700; color:var(--ink-soft); z-index:2; font-family:'IBM Plex Mono',monospace;}
+.jar-pct.jar-pct-on-fill{color:#fff; text-shadow:0 1px 2px rgba(0,0,0,0.25);}
+.jar-name{font-weight:600; font-size:15px; font-family:'Newsreader',serif;}
+.jar-nums{display:flex; justify-content:space-between; align-items:baseline;}
+.jar-nums .cur{font-size:15px; font-weight:700; color:var(--brass-deep); font-family:'IBM Plex Mono',monospace;}
+.jar-nums .goal{font-size:11.5px; color:var(--ink-soft); font-family:'IBM Plex Mono',monospace;}
+.jar-actions{display:flex; gap:6px;}
+.jar-actions input{width:74px;}
+.jar-complete-badge{position:absolute; top:10px; left:10px; background:var(--brass); color:#2A1D0C; font-size:10px; font-weight:700; padding:3px 8px; border-radius:20px; z-index:3; text-transform:uppercase; letter-spacing:0.4px;}
+
+.form-grid{display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:12px;}
+.form-grid.cols-3{grid-template-columns:1fr 1fr 1fr;}
+.form-grid.full{grid-template-columns:1fr;}
+label{font-size:12px; color:var(--ink-soft); display:block; margin-bottom:4px; font-weight:500;}
+input, select, textarea{width:100%; background:var(--paper-sunken); border:1px solid var(--rule); color:var(--ink); border-radius:8px; padding:9px 10px; font-size:13.5px; font-family:'Inter',sans-serif;}
+input:focus, select:focus, textarea:focus{outline:none; border-color:var(--brass); background:var(--paper-card);}
+.field{display:flex; flex-direction:column;}
+.modal-overlay{position:fixed; inset:0; background:rgba(43,33,24,0.4); backdrop-filter:blur(1.5px); display:flex; align-items:center; justify-content:center; z-index:50; padding:20px;}
+.modal{background:var(--paper-card); border:1px solid var(--rule); border-radius:18px; padding:24px; width:100%; max-width:440px; max-height:88vh; overflow-y:auto; box-shadow:var(--shadow-pop); animation:modal-in .22s cubic-bezier(.22,1.1,.36,1);}
+@keyframes modal-in{from{opacity:0; transform:translateY(8px) scale(.98);} to{opacity:1; transform:translateY(0) scale(1);}}
+.modal h3{margin-bottom:16px; font-size:18px; font-family:'Newsreader',serif;}
+.modal-actions{display:flex; justify-content:flex-end; gap:8px; margin-top:6px;}
+
+.progress-track{height:8px; background:var(--paper-sunken); border-radius:6px; overflow:hidden; border:1px solid var(--rule);}
+.progress-fill{height:100%; background:var(--verdigris); border-radius:6px; transition:width .5s ease;}
+.dot{width:7px; height:7px; border-radius:50%; flex-shrink:0; display:inline-block;}
+
+.chat-box{background:var(--paper-sunken); border:1px solid var(--rule); border-radius:12px; padding:16px; min-height:140px; font-size:14px; line-height:1.65; white-space:pre-wrap;}
+.suggestion-chip{display:inline-block; background:var(--paper-card); border:1px solid var(--rule); border-radius:20px; padding:7px 13px; font-size:12.5px; margin:4px 6px 0 0; cursor:pointer; color:var(--ink-soft); transition:border-color .15s, color .15s;}
+.suggestion-chip:hover{border-color:var(--brass); color:var(--brass-deep);}
+
+.due-badge{font-size:10.5px; padding:2px 8px; border-radius:20px; font-weight:700; flex-shrink:0;}
+.due-ok{background:var(--verdigris-tint); color:var(--verdigris);}
+.due-soon{background:var(--brass-tint); color:var(--brass-deep);}
+.due-late{background:var(--garnet-tint); color:var(--garnet);}
+
+::-webkit-scrollbar{width:8px;}
+::-webkit-scrollbar-thumb{background:var(--rule); border-radius:4px;}
+.hint{font-size:12px; color:var(--ink-soft); margin-top:10px; line-height:1.5;}
+.mode-toggle{display:flex; gap:8px; margin-bottom:16px;}
+.mode-option{flex:1; border:1px solid var(--rule); background:var(--paper-sunken); border-radius:10px; padding:14px; text-align:center; cursor:pointer; font-weight:500; transition:border-color .15s, background .15s;}
+.mode-option.selected{border-color:var(--brass); background:var(--brass-tint); color:var(--brass-deep); font-weight:600;}
+.top-msg{color:var(--ink-soft); padding:40px; font-size:14px;}
+
+.auth-wrap{max-width:420px; margin:56px auto; padding:0 16px;}
+.auth-hero{text-align:center; margin-bottom:8px;}
+.auth-hero .brand-mark{width:44px; height:44px; margin:0 auto 10px;}
+.auth-hero p{color:var(--ink-soft); font-size:13px; margin-top:4px;}
+.auth-tabs{display:flex; gap:8px; margin-bottom:18px;}
+.auth-tab{flex:1; text-align:center; padding:10px; border-radius:9px; cursor:pointer; color:var(--ink-soft); font-size:13.5px; font-weight:600; background:var(--paper-sunken); border:1px solid var(--rule);}
+.auth-tab.active{background:var(--brass-tint); color:var(--brass-deep); border-color:var(--brass);}
+.error-msg{color:var(--garnet); font-size:12.5px; margin-bottom:10px; min-height:14px;}
+.role-badge{font-size:10px; padding:2px 7px; border-radius:20px; background:var(--brass-tint); color:var(--brass-deep); font-weight:700; text-transform:uppercase;}
+
+/* Celebração ao completar uma caixinha — um único momento orquestrado,
+   não confete solto pela tela toda. */
+.confetti-burst{position:absolute; inset:0; pointer-events:none; overflow:visible;}
+.confetti-piece{position:absolute; top:40%; left:50%; width:6px; height:10px; opacity:0; border-radius:1px;}
+@keyframes confetti-fall{
+  0%{opacity:1; transform:translate(0,0) rotate(0deg);}
+  100%{opacity:0; transform:translate(var(--dx), var(--dy)) rotate(var(--rot));}
+}
+.confetti-piece.go{animation:confetti-fall 900ms ease-out forwards;}
+
+/* =====================================================================
+   MAPA DE GASTOS — donut de categorias + legenda com barras, primeira
+   coisa que aparece ao entrar no app.
+   ===================================================================== */
+.spending-map{display:flex; gap:28px; align-items:center; flex-wrap:wrap;}
+.spending-donut-wrap{position:relative; width:148px; height:148px; flex-shrink:0;}
+.spending-donut{width:100%; height:100%; border-radius:50%; box-shadow:inset 0 0 0 1px var(--rule);}
+.spending-donut-hole{position:absolute; inset:22px; border-radius:50%; background:var(--paper-card); display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; box-shadow:0 1px 3px rgba(43,33,24,0.12);}
+.spending-donut-total{font-family:'IBM Plex Mono',monospace; font-weight:700; font-size:14.5px; color:var(--ink);}
+.spending-donut-label{font-size:9.5px; color:var(--ink-soft); margin-top:2px; text-transform:uppercase; letter-spacing:0.4px;}
+.spending-legend{flex:1; min-width:220px; display:flex; flex-direction:column; gap:10px;}
+.spending-legend-row{display:flex; align-items:center; gap:10px;}
+.spending-dot{width:9px; height:9px; border-radius:50%; flex-shrink:0;}
+.spending-legend-info{flex:1; min-width:0;}
+.spending-legend-top{display:flex; justify-content:space-between; gap:8px; font-size:12.5px;}
+.spending-legend-name{font-weight:600; color:var(--ink);}
+.spending-legend-amount{font-family:'IBM Plex Mono',monospace; color:var(--ink-soft); flex-shrink:0;}
+.spending-legend-pct{font-family:'IBM Plex Mono',monospace; font-size:11.5px; color:var(--ink-soft); width:34px; text-align:right; flex-shrink:0;}
+@media(max-width:600px){
+  .spending-map{flex-direction:column; align-items:center; text-align:center;}
+  .spending-legend{width:100%; text-align:left;}
+}
+
+@media(max-width:760px){
+  .app{flex-direction:column;}
+  .sidebar{width:100%; flex-direction:row; overflow-x:auto; padding:10px; border-right:none; border-bottom:1px solid var(--rule);}
+  .brand{display:none;}
+  .nav-btn{flex-direction:column; font-size:10px; padding:8px 9px; white-space:nowrap; gap:4px;}
+  .main{padding:18px 16px 50px;}
+  .gauge-wrap{justify-content:center; text-align:center;}
+}
