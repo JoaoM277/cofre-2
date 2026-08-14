@@ -2,12 +2,36 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Cofre — Finanças Pessoais</title>
+
+<!-- Ícone que aparece na aba do navegador -->
+<link rel="icon" type="image/png" sizes="32x32" href="/icons/icon-32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/icons/icon-16.png">
+<link rel="shortcut icon" href="/icons/favicon.ico">
+
+<!-- Manifest — define o ícone e o nome usados ao "Adicionar à tela de início" -->
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#2B2118">
+<meta name="background-color" content="#F6EFE1">
+
+<!-- Ícone específico da tela inicial no iOS/Safari -->
+<link rel="apple-touch-icon" href="/icons/icon-180.png">
+<link rel="apple-touch-icon" sizes="152x152" href="/icons/icon-152.png">
+<link rel="apple-touch-icon" sizes="167x167" href="/icons/icon-167.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/icons/icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Cofre">
+
+<!-- Android/Chrome -->
+<meta name="mobile-web-app-capable" content="yes">
+
 <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
 <div id="root"><div class="top-msg">Carregando o cofre...</div></div>
 <script src="/app.js"></script>
+<script src="/register-sw.js"></script>
 </body>
 </html>
