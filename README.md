@@ -8,15 +8,15 @@ com banco de dados próprio (SQLite) e autenticação no servidor.
 
 ## Por que isso é mais seguro
 
-| Antes (só cliente) | Agora (cliente + servidor) |
-|---|---|
-| Senha "hasheada" no navegador (SHA-256 simples) | Senha com hash **bcrypt** (custo 12) no servidor, nunca sai do backend |
+| Antes (só cliente)                                                  | Agora (cliente + servidor)                                                                               |
+| ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| Senha "hasheada" no navegador (SHA-256 simples)                     | Senha com hash **bcrypt** (custo 12) no servidor, nunca sai do backend                                   |
 | "Isolamento" entre clientes dependia só do nome da chave de storage | Isolamento garantido pelo servidor: toda consulta é filtrada por `user_id` extraído de um token validado |
-| Sessão sem expiração/local nenhum de verdade | Sessão via **cookie httpOnly** (inacessível a JavaScript/XSS), expira em 7 dias |
-| Sem proteção a força bruta | Login com **rate limiting** por IP + bloqueio temporário após 5 tentativas erradas |
-| Chave da IA não existia no client (usava o proxy do Claude.ai) | Chave da API fica **só no `.env` do servidor**, nunca trafega até o navegador |
-| Sem proteção contra CSRF | Cookie `SameSite=Lax` + header customizado exigido em toda escrita |
-| Storage dependia da API de artefato do Claude.ai (podia falhar) | Banco de dados SQLite próprio, independente de qualquer plataforma externa |
+| Sessão sem expiração/local nenhum de verdade                        | Sessão via **cookie httpOnly** (inacessível a JavaScript/XSS), expira em 7 dias                          |
+| Sem proteção a força bruta                                          | Login com **rate limiting** por IP + bloqueio temporário após 5 tentativas erradas                       |
+| Chave da IA não existia no client (usava o proxy do Claude.ai)      | Chave da API fica **só no `.env` do servidor**, nunca trafega até o navegador                            |
+| Sem proteção contra CSRF                                            | Cookie `SameSite=Lax` + header customizado exigido em toda escrita                                       |
+| Storage dependia da API de artefato do Claude.ai (podia falhar)     | Banco de dados SQLite próprio, independente de qualquer plataforma externa                               |
 
 ## Estrutura
 
@@ -49,6 +49,7 @@ cofre-app/
    ```bash
    cp .env.example .env
    ```
+
    - `JWT_SECRET`: gere um valor aleatório forte, por exemplo:
      ```bash
      node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
@@ -96,6 +97,7 @@ evoluir:
 ## Testes manuais já realizados
 
 Antes da entrega, validei localmente com `curl`:
+
 - Registro cria o primeiro usuário como admin; usuários seguintes como `client`.
 - Login com senha errada retorna 401 com mensagem genérica (não revela se o e-mail existe).
 - Requisições de escrita sem o header anti-CSRF são bloqueadas (403).

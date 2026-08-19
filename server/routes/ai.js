@@ -21,11 +21,20 @@ function fmt(n) {
 }
 
 function buildSummary(data, monthKey) {
+  // Resolve o nome da categoria a partir do cadastro central (category_id).
+  const catName = (id) => {
+    const c = (data.categories || []).find(c => c.id === id);
+    return c ? c.name : 'Sem categoria';
+  };
+
   const monthTx = (data.transactions || []).filter(t => t.date && t.date.startsWith(monthKey));
   const entradas = monthTx.filter(t => t.type === 'entrada').reduce((s, t) => s + Number(t.amount), 0);
   const saidas = monthTx.filter(t => t.type === 'saida').reduce((s, t) => s + Number(t.amount), 0);
   const porCategoria = {};
-  monthTx.filter(t => t.type === 'saida').forEach(t => { porCategoria[t.category] = (porCategoria[t.category] || 0) + Number(t.amount); });
+  monthTx.filter(t => t.type === 'saida').forEach(t => {
+    const name = catName(t.categoryId);
+    porCategoria[name] = (porCategoria[name] || 0) + Number(t.amount);
+  });
 
   const parcelasAtivas = (data.installments || []).filter(i => i.paid < i.count)
     .map(i => `${i.description}: ${i.paid}/${i.count} pagas, restam ${fmt(i.monthlyAmount * (i.count - i.paid))}`);
@@ -38,8 +47,8 @@ function buildSummary(data, monthKey) {
   });
 
   const orcamentos = (data.budgets || []).map(b => {
-    const spent = monthTx.filter(t => t.type === 'saida' && t.category === b.category).reduce((s, t) => s + Number(t.amount), 0);
-    return `${b.category}: gastou ${fmt(spent)} de um orçamento de ${fmt(b.amount)}${spent > b.amount ? ' (ESTOUROU)' : ''}`;
+    const spent = monthTx.filter(t => t.type === 'saida' && t.categoryId === b.categoryId).reduce((s, t) => s + Number(t.amount), 0);
+    return `${catName(b.categoryId)}: gastou ${fmt(spent)} de um orçamento de ${fmt(b.amount)}${spent > b.amount ? ' (ESTOUROU)' : ''}`;
   });
 
   const modo = data.settings?.mode === 'single' ? 'pessoa solteira' : 'casal';

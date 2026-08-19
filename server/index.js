@@ -17,9 +17,12 @@ const PORT = process.env.PORT || 3000;
 app.use(helmet({
   contentSecurityPolicy: {
     directives: {
-      ...helmet.contentSecurityPolicy.getDefaultDirectives(),
-      "script-src": ["'self'"],
-      "style-src": ["'self'", "'unsafe-inline'", "https://fonts.cdnfonts.com"],
+       ...helmet.contentSecurityPolicy.getDefaultDirectives(),
+       "script-src": ["'self'"],
+       // A interface usa atributos onclick nos elementos renderizados pelo app.
+       // Libera apenas esses atributos, mantendo blocos <script> inline bloqueados.
+       "script-src-attr": ["'unsafe-inline'"],
+       "style-src": ["'self'", "'unsafe-inline'", "https://fonts.cdnfonts.com"],
       "font-src": ["'self'", "https://fonts.cdnfonts.com", "data:"],
       "connect-src": ["'self'"]
     }

@@ -11,7 +11,7 @@ const MAX_JSON_SIZE = 2 * 1024 * 1024; // 2MB por conta é bastante folga para e
 // express.json() já limita o tamanho do payload no nível do servidor).
 function isValidBundle(data) {
   if (!data || typeof data !== 'object') return false;
-  const arrayFields = ['transactions', 'installments', 'cards', 'caixinhas', 'reminders', 'budgets'];
+  const arrayFields = ['categories', 'transactions', 'installments', 'cards', 'caixinhas', 'reminders', 'budgets'];
   for (const f of arrayFields) {
     if (!Array.isArray(data[f])) return false;
   }
