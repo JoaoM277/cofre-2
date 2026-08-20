@@ -156,6 +156,71 @@ function brandMarkSvg(size){
   </svg>`;
 }
 
+// ---------------- Ícones (linha única, estilo consistente) ----------------
+// Pequeno conjunto de ícones lineares desenhado no mesmo espírito de
+// bibliotecas como a Lucide (stroke uniforme, cantos arredondados, grid
+// 24x24) — sem depender de nenhuma biblioteca externa (a CSP do app só
+// libera scripts do próprio domínio).
+const ICON_PATHS = {
+  dashboard: '<rect x="3" y="3" width="7" height="9" rx="1.6"/><rect x="14" y="3" width="7" height="5" rx="1.6"/><rect x="14" y="12" width="7" height="9" rx="1.6"/><rect x="3" y="16" width="7" height="5" rx="1.6"/>',
+  swap: '<path d="M4 7h13M17 7l-3.5-3.5M17 7l-3.5 3.5"/><path d="M20 17H7M7 17l3.5-3.5M7 17l3.5 3.5"/>',
+  target: '<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r="0.9" fill="currentColor" stroke="none"/>',
+  layers: '<path d="M12 3.5 3 8l9 4.5 9-4.5-9-4.5Z"/><path d="M3 13l9 4.5 9-4.5"/>',
+  card: '<rect x="2.5" y="5.5" width="19" height="13" rx="2.2"/><path d="M2.5 10h19"/><path d="M6 14.5h4"/>',
+  jar: '<path d="M8 3h8v3.4a2 2 0 0 0 .55 1.38L18 10.3A3 3 0 0 1 19 12.5V19a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-6.5a3 3 0 0 1 1-2.2l1.45-2.52A2 2 0 0 0 8 6.4V3Z"/><path d="M6.3 14.5h11.4"/>',
+  heart: '<path d="M12 20.5s-7.6-4.6-9.9-9.3C.6 7.7 2.4 4 6 4c2.1 0 3.6 1.2 6 3.6C14.4 5.2 15.9 4 18 4c3.6 0 5.4 3.7 3.9 7.2-2.3 4.7-9.9 9.3-9.9 9.3Z"/>',
+  bell: '<path d="M6 9.5a6 6 0 0 1 12 0c0 4 1.5 5.5 1.5 5.5H4.5S6 13.5 6 9.5Z"/><path d="M10 19a2 2 0 0 0 4 0"/>',
+  sparkles: '<path d="M12 3.5 13.3 8l4.5 1.3-4.5 1.3L12 15l-1.3-4.4L6.2 9.3l4.5-1.3L12 3.5Z"/><path d="M19 15.5l.7 2 2 .7-2 .7-.7 2-.7-2-2-.7 2-.7.7-2Z"/>',
+  shield: '<path d="M12 3.5 19 6.2v5.3c0 4.5-3 7-7 9-4-2-7-4.5-7-9V6.2L12 3.5Z"/><path d="m9 12 2 2 4-4"/>',
+  settings: '<circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v3M12 18.5v3M4.2 4.2l2.2 2.2M17.6 17.6l2.2 2.2M2.5 12h3M18.5 12h3M4.2 19.8l2.2-2.2M17.6 6.4l2.2-2.2"/>',
+  logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/>',
+  menu: '<path d="M4 6.5h16M4 12h16M4 17.5h16"/>',
+  x: '<path d="M6 6l12 12M18 6 6 18"/>',
+  chevronLeft: '<path d="M14.5 5 8 12l6.5 7"/>',
+  chevronRight: '<path d="M9.5 5 16 12l-6.5 7"/>'
+};
+function icon(name, size){
+  const s = size || 18;
+  const body = ICON_PATHS[name] || '';
+  return `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
+}
+
+// ---------------- Splash screen ----------------
+// Tela de abertura curta: mostra a marca e uma frase sobre organização
+// financeira enquanto a sessão é verificada. Nunca segura o app além do
+// necessário — some assim que o carregamento termina, respeitando uma
+// duração mínima só para não "piscar" em conexões muito rápidas.
+const SPLASH_PHRASES = [
+  { text: 'Organização traz clareza.' },
+  { text: 'Pequenas decisões constroem grandes futuros.' },
+  { text: 'Prosperidade começa com propósito.' },
+  { text: 'Cuide do seu hoje. Construa o seu amanhã.' },
+  { text: 'Com sabedoria se edifica a casa.', ref: 'Provérbios 24:3' }
+];
+const SPLASH_MIN_MS = 900;
+let SPLASH_START = Date.now();
+function initSplash(){
+  const el = document.getElementById('splash');
+  if(!el) return;
+  const phrase = SPLASH_PHRASES[Math.floor(Math.random()*SPLASH_PHRASES.length)];
+  el.innerHTML = `
+    ${brandMarkSvg(64).replace('brand-mark','brand-mark splash-mark')}
+    <div class="splash-word">Cofre<span class="accent">.</span></div>
+    <div class="splash-phrase">${esc(phrase.text)}${phrase.ref?`<span class="ref">${esc(phrase.ref)}</span>`:''}</div>
+  `;
+}
+function hideSplash(){
+  const el = document.getElementById('splash');
+  if(!el) return;
+  const elapsed = Date.now() - SPLASH_START;
+  const wait = Math.max(0, SPLASH_MIN_MS - elapsed);
+  setTimeout(()=>{
+    el.classList.add('splash-hide');
+    setTimeout(()=> el.remove(), 550);
+  }, wait);
+}
+initSplash();
+
 // ---------------- Dicas do Cofre ----------------
 // Educação financeira em porções pequenas, no tom de um amigo que entende
 // do assunto — não um manual. Uma por aba, escolhida por contexto (não
@@ -387,6 +452,12 @@ function renderAuthGate(){
         ` : ''}
         <div class="form-grid full"><div class="field"><label>E-mail</label><input id="auth-email" type="email" placeholder="voce@email.com"></div></div>
         <div class="form-grid full"><div class="field"><label>Senha</label><input id="auth-password" type="password" placeholder="${AUTH_MODE==='register'?'mínimo 8 caracteres':'sua senha'}"></div></div>
+        ${AUTH_MODE==='register' ? `
+        <div class="consent-row">
+          <input type="checkbox" id="auth-consent">
+          <label for="auth-consent">Li e estou de acordo com os <a onclick="event.preventDefault(); openTermsModal()">Termos de Uso e a Política de Privacidade</a>, e entendo como o Cofre trata meus dados pessoais e financeiros conforme a LGPD.</label>
+        </div>
+        ` : ''}
         <button class="btn" style="width:100%; margin-top:6px;" id="auth-submit-btn" onclick="${AUTH_MODE==='login'?'submitLogin()':'submitRegister()'}">${AUTH_MODE==='login'?'Entrar':'Criar minha conta'}</button>
         <div class="hint">Suas credenciais nunca ficam guardadas no navegador: a senha é validada no servidor (hash bcrypt) e a sessão usa um cookie seguro, inacessível via JavaScript.</div>
       </div>
@@ -395,7 +466,32 @@ function renderAuthGate(){
 }
 function setAuthMode(m){ AUTH_MODE = m; AUTH_ERROR=''; renderAuthGate(); }
 
+function openTermsModal(){
+  openModal(`
+    <h3>Termos de Uso &amp; Privacidade (LGPD)</h3>
+    <div class="sub" style="margin-bottom:12px; line-height:1.6;">
+      O Cofre guarda apenas os dados que você mesmo(a) cadastra para controlar suas finanças
+      (lançamentos, categorias, caixinhas, cartões e lembretes). Esses dados ficam vinculados
+      à sua conta, isolados por usuário no banco de dados do servidor, e nunca são
+      compartilhados com terceiros ou usados para fins de publicidade. Sua senha nunca é
+      armazenada em texto puro — apenas um hash criptográfico dela. Você pode solicitar a
+      exclusão da sua conta e dos dados associados a qualquer momento, conforme previsto pela
+      Lei Geral de Proteção de Dados (Lei nº 13.709/2018).
+    </div>
+    <div class="modal-actions"><button class="btn secondary" onclick="closeModal()">Fechar</button></div>
+  `);
+}
 async function submitRegister(){
+  const consentEl = document.getElementById('auth-consent');
+  if(consentEl && !consentEl.checked){
+    // Evita renderAuthGate() aqui de propósito: um full re-render limparia o
+    // que a pessoa já preencheu. Mostra o erro no lugar, sem apagar o formulário.
+    const errEl = document.querySelector('.auth-wrap .error-msg');
+    if(errEl) errEl.textContent = 'Confirme que leu e concorda com os Termos e a Política de Privacidade para continuar.';
+    const row = consentEl.closest('.consent-row');
+    if(row){ row.style.borderColor = 'var(--garnet)'; }
+    return;
+  }
   const btn = document.getElementById('auth-submit-btn'); btn.disabled = true;
   const name = val('auth-name');
   const email = val('auth-email');
@@ -510,17 +606,17 @@ function saveSettings(){
 // ---------------- Nav ----------------
 function getNav(){
   const nav = [
-    {id:'dashboard', label:'Visão Geral', icon:'◆'},
-    {id:'transacoes', label:'Entradas & Saídas', icon:'⇅'},
-    {id:'orcamentos', label:'Orçamentos', icon:'▥'},
-    {id:'parcelas', label:'Parcelas', icon:'▤'},
-    {id:'cartao', label:'Cartão', icon:'▭'},
-    {id:'caixinhas', label:'Caixinhas', icon:'●'},
-    {id:'dizimo', label:'Dízimo', icon:'✦'},
-    {id:'lembretes', label:'Lembretes', icon:'⏰'},
-    {id:'ia', label:'Conselheira IA', icon:'✧'},
+    {id:'dashboard', label:'Visão Geral', icon:'dashboard'},
+    {id:'transacoes', label:'Entradas & Saídas', icon:'swap'},
+    {id:'orcamentos', label:'Orçamentos', icon:'target'},
+    {id:'parcelas', label:'Parcelas', icon:'layers'},
+    {id:'cartao', label:'Cartão', icon:'card'},
+    {id:'caixinhas', label:'Caixinhas', icon:'jar'},
+    {id:'dizimo', label:'Dízimo', icon:'heart'},
+    {id:'lembretes', label:'Lembretes', icon:'bell'},
+    {id:'ia', label:'Conselheira IA', icon:'sparkles'},
   ];
-  if(SESSION && SESSION.role==='admin') nav.push({id:'admin', label:'Painel Admin', icon:'⌂'});
+  if(SESSION && SESSION.role==='admin') nav.push({id:'admin', label:'Painel Admin', icon:'shield'});
   return nav;
 }
 function changeMonth(delta){ CURRENT_MONTH = new Date(CURRENT_MONTH.getFullYear(), CURRENT_MONTH.getMonth()+delta, 1); render(); }
@@ -545,7 +641,7 @@ function render(){
 
   const NAV = getNav();
   const showMonthPicker = ['dashboard','transacoes','cartao','dizimo','orcamentos'].includes(TAB);
-  const navHtml = NAV.map(n => `<button class="nav-btn ${TAB===n.id?'active':''}" onclick="switchTab('${n.id}')"><span class="nav-icon">${n.icon}</span>${n.label}</button>`).join('');
+  const navHtml = NAV.map(n => `<button class="nav-btn ${TAB===n.id?'active':''}" onclick="switchTab('${n.id}')"><span class="nav-icon">${icon(n.icon)}</span>${n.label}</button>`).join('');
 
   root.innerHTML = `
     <div class="app">
@@ -553,11 +649,11 @@ function render(){
       <div class="sidebar" id="app-sidebar">
         <div class="sidebar-top">
           <div class="brand">${brandMarkSvg(24)}Cofre<span class="accent">.</span></div>
-          <button class="sidebar-close" onclick="closeSidebar()" aria-label="Fechar menu">✕</button>
+          <button class="sidebar-close" onclick="closeSidebar()" aria-label="Fechar menu">${icon('x')}</button>
         </div>
         ${navHtml}
-        <button class="nav-btn" onclick="renderSettingsModal()"><span class="nav-icon">⚙</span>Configurações</button>
-        <button class="nav-btn" onclick="logout()"><span class="nav-icon">↩</span>Sair</button>
+        <button class="nav-btn" onclick="renderSettingsModal()"><span class="nav-icon">${icon('settings')}</span>Configurações</button>
+        <button class="nav-btn" onclick="logout()"><span class="nav-icon">${icon('logout')}</span>Sair</button>
         <div style="margin-top:auto; padding-top:14px; font-size:11px; color:#5c6d61; line-height:1.6;">
           <div>${esc(SESSION.name)} ${SESSION.role==='admin'?'<span class="role-badge">admin</span>':''}</div>
           <div id="save-indicator">sincronizado</div>
@@ -566,14 +662,14 @@ function render(){
       <div class="main">
         <div class="topbar">
           <div style="display:flex; align-items:center; gap:12px;">
-            <button class="hamburger-btn" onclick="toggleSidebar()" aria-label="Abrir menu">☰</button>
+            <button class="hamburger-btn" onclick="toggleSidebar()" aria-label="Abrir menu">${icon('menu')}</button>
             <h1>${NAV.find(n=>n.id===TAB)?.label || ''}</h1>
           </div>
           ${showMonthPicker ? `
           <div class="month-picker">
-            <button onclick="changeMonth(-1)">‹</button>
+            <button onclick="changeMonth(-1)" aria-label="Mês anterior">${icon('chevronLeft',15)}</button>
             <div class="label">${monthLabel(CURRENT_MONTH)}</div>
-            <button onclick="changeMonth(1)">›</button>
+            <button onclick="changeMonth(1)" aria-label="Próximo mês">${icon('chevronRight',15)}</button>
           </div>` : ''}
         </div>
         <div id="tab-content"></div>
@@ -762,18 +858,24 @@ function renderDashboard(mKey){
   }).length;
 
   return `
+    <div class="hero-balance">
+      <div>
+        <div class="stat-label">Saldo do mês</div>
+        <div class="stat-hero" style="color:${saldo<0?'var(--garnet)':'var(--verdigris)'}">${fmt(saldo)}</div>
+      </div>
+      <div class="hero-balance-secondary">
+        <div class="mini-stat"><div class="mini-stat-label">Entradas</div><div class="mini-stat-value" style="color:var(--verdigris)">${fmt(entradas)}</div></div>
+        <div class="mini-stat"><div class="mini-stat-label">Saídas</div><div class="mini-stat-value" style="color:var(--garnet)">${fmt(saidas)}</div></div>
+        <div class="mini-stat"><div class="mini-stat-label">Dízimo pendente</div><div class="mini-stat-value" style="color:var(--brass-deep)">${fmt(titheOwed)}</div></div>
+      </div>
+    </div>
     <section style="margin-bottom:24px;">
       ${renderSpendingMap(monthTx)}
     </section>
     ${renderTipCard('dashboard')}
-    <section style="margin-bottom:24px;">
+    <section style="margin-bottom:32px;">
       ${renderGauge(saldo, entradas)}
     </section>
-    <div class="grid grid-3" style="margin-bottom:32px;">
-      <div class="card"><div class="stat-label">Entradas do mês</div><div class="stat-value" style="color:var(--verdigris)">${fmt(entradas)}</div></div>
-      <div class="card"><div class="stat-label">Saídas do mês</div><div class="stat-value" style="color:var(--garnet)">${fmt(saidas)}</div></div>
-      <div class="card"><div class="stat-label">Dízimo pendente</div><div class="stat-value" style="color:var(--brass-deep)">${fmt(titheOwed)}</div></div>
-    </div>
     <section>
       <div class="section-head">
         <div><h2>Orçamentos do mês</h2><div class="sub">${budgetsOver>0? budgetsOver+' categoria(s) estouraram o orçamento' : 'Nenhum orçamento estourado'}</div></div>
@@ -789,7 +891,7 @@ function renderDashboard(mKey){
         <div><h2>Próximos vencimentos</h2><div class="sub">Parcelas, cartão e lembretes dos próximos 15 dias</div></div>
         <button class="btn secondary small" onclick="switchTab('lembretes')">Ver todos</button>
       </div>
-      <div class="row-list">
+      <div class="row-list list-grouped">
         ${upcoming.length===0 ? '<div class="empty"><span class="empty-title">Tudo em dia ✦</span>Nenhum vencimento nos próximos 15 dias.</div>' :
           upcoming.slice(0,6).map(r=>`
           <div class="item-row">
@@ -840,7 +942,7 @@ function renderTransacoes(mKey){
       </div>
       <button class="btn" onclick="openTxForm()">+ Novo lançamento</button>
     </div>
-    <div class="row-list">
+    <div class="row-list list-grouped">
       ${monthTx.length===0 ? '<div class="empty"><span class="empty-title">Nada por aqui ainda</span>Registre o primeiro lançamento do mês — mesmo os pequenos contam.</div>' :
         monthTx.map(t=>`
         <div class="item-row">
@@ -1512,7 +1614,7 @@ function renderLembretes(){
     ${renderTipCard('lembretes')}
     <section>
       <div class="section-head"><div><h2>Automáticos</h2><div class="sub">Gerados a partir de parcelas, cartões e dízimo (próximos 15 dias)</div></div></div>
-      <div class="row-list">
+      <div class="row-list list-grouped">
         ${upcoming.length===0?'<div class="empty"><span class="empty-title">Nada por vir nos próximos 15 dias</span>Assim que houver parcela, fatura ou dízimo próximos do vencimento, eles aparecem aqui.</div>':
           upcoming.map(r=>`
           <div class="item-row">
@@ -1526,7 +1628,7 @@ function renderLembretes(){
         <div><h2>Personalizados</h2><div class="sub">Lembretes avulsos que você adicionar</div></div>
         <button class="btn" onclick="openReminderForm()">+ Novo lembrete</button>
       </div>
-      <div class="row-list">
+      <div class="row-list list-grouped">
         ${customReminders.length===0?'<div class="empty"><span class="empty-title">Sem lembretes por aqui</span>Cadastre algo fora da rotina do app, tipo IPTU ou renovação de seguro.</div>':
           customReminders.map(r=>`
           <div class="item-row">
@@ -1629,7 +1731,7 @@ function renderAdmin(){
       <div class="sub">${clients.length} conta(s) cadastrada(s)</div>
       <button class="btn" onclick="openAdminCreateForm()">+ Cadastrar novo cliente</button>
     </div>
-    <div class="row-list">
+    <div class="row-list list-grouped">
       ${clients.map(c=>`
         <div class="item-row">
           <div class="item-left">
@@ -1691,4 +1793,5 @@ async function adminDeleteClient(id){
     SESSION = null;
   }
   render();
+  hideSplash();
 })();

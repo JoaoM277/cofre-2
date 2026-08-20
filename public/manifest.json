@@ -2,6 +2,7 @@
   "name": "Cofre — Finanças Pessoais",
   "short_name": "Cofre",
   "description": "Controle de entradas, saídas, parcelas, cartão, caixinhas e dízimo — sozinho(a) ou a dois.",
+  "id": "/",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
@@ -9,6 +10,7 @@
   "background_color": "#F6EFE1",
   "theme_color": "#2B2118",
   "lang": "pt-BR",
+  "categories": ["finance", "productivity"],
   "icons": [
     { "src": "/icons/icon-96.png", "sizes": "96x96", "type": "image/png", "purpose": "any" },
     { "src": "/icons/icon-128.png", "sizes": "128x128", "type": "image/png", "purpose": "any" },

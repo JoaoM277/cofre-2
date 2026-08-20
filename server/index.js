@@ -22,8 +22,13 @@ app.use(helmet({
        // A interface usa atributos onclick nos elementos renderizados pelo app.
        // Libera apenas esses atributos, mantendo blocos <script> inline bloqueados.
        "script-src-attr": ["'unsafe-inline'"],
-       "style-src": ["'self'", "'unsafe-inline'", "https://fonts.cdnfonts.com"],
-      "font-src": ["'self'", "https://fonts.cdnfonts.com", "data:"],
+       // As fontes (Newsreader/Inter/IBM Plex Mono) vêm do Google Fonts: a
+       // folha de estilo é servida por fonts.googleapis.com e os arquivos
+       // de fonte em si por fonts.gstatic.com — os dois precisam estar
+       // liberados, senão o navegador bloqueia o @import silenciosamente
+       // e a interface cai para a fonte padrão do sistema.
+       "style-src": ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+      "font-src": ["'self'", "https://fonts.gstatic.com", "data:"],
       "connect-src": ["'self'"]
     }
   }
