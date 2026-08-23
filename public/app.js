@@ -1,6 +1,12 @@
 const uid = () => Math.random().toString(36).slice(2,10) + Date.now().toString(36).slice(-4);
 const fmt = (n) => (Number(n)||0).toLocaleString('pt-BR', {style:'currency', currency:'BRL'});
 const monthKey = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+// Formata como YYYY-MM-DD usando o calendário local — evita o bug clássico
+// de toISOString() (que converte pra UTC e pode "voltar" um dia perto da
+// meia-noite em fusos negativos como o do Brasil). Usado em qualquer data
+// calculada a partir de outra data (faturas, vencimentos etc.).
+const dateStr = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+const monthKeyToDate = (mKey) => { const [y,m] = mKey.split('-').map(Number); return new Date(y, m-1, 1); };
 const monthLabel = (d) => d.toLocaleDateString('pt-BR', {month:'long', year:'numeric'});
 const esc = (s) => String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
@@ -177,7 +183,13 @@ const ICON_PATHS = {
   menu: '<path d="M4 6.5h16M4 12h16M4 17.5h16"/>',
   x: '<path d="M6 6l12 12M18 6 6 18"/>',
   chevronLeft: '<path d="M14.5 5 8 12l6.5 7"/>',
-  chevronRight: '<path d="M9.5 5 16 12l-6.5 7"/>'
+  chevronRight: '<path d="M9.5 5 16 12l-6.5 7"/>',
+  edit: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5Z"/>',
+  history: '<path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v4.5H7.5"/><path d="M12 8v4.5l3 2"/>',
+  wallet: '<path d="M3 7.5A2.5 2.5 0 0 1 5.5 5h13A2.5 2.5 0 0 1 21 7.5v9A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5v-9Z"/><path d="M16 12.2h2.2"/><path d="M3 9.5h18"/>',
+  check: '<path d="M4.5 12.5 9.5 17.5 19.5 6.5"/>',
+  alertCircle: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5v5.5"/><circle cx="12" cy="16.3" r="0.9" fill="currentColor" stroke="none"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>'
 };
 function icon(name, size){
   const s = size || 18;
@@ -353,11 +365,313 @@ async function api(path, options={}){
 // ---------------- Persistência de dados financeiros ----------------
 async function loadClientData(){
   const res = await api('/data');
-  return migrateCategories(res.data || DEFAULT_DATA());
+  return migrateFinance(migrateCategories(res.data || DEFAULT_DATA()));
 }
 function DEFAULT_DATA(){
-  return {settings:null, categories:[], transactions:[], installments:[], cards:[], cardBills:{}, caixinhas:[], titheStatus:{}, reminders:[], budgets:[]};
+  return {
+    settings:null, categories:[], transactions:[], installments:[],
+    cards:[], accounts:[], purchases:[], invoices:{},
+    caixinhas:[], titheStatus:{}, reminders:[], budgets:[]
+  };
 }
+
+/* =====================================================================
+   MÓDULO DE CARTÕES / FATURAS / PARCELAMENTOS / AUDITORIA
+   Ver PLANO.md na raiz do projeto para as decisões de arquitetura por
+   trás do que está aqui — em especial a separação entre saldo bancário
+   (cash) e categorias/gráficos (accrual), e por que a auditoria é uma
+   tabela própria no servidor em vez de viver dentro deste blob.
+   ===================================================================== */
+
+const PAYMENT_METHODS = [
+  {id:'dinheiro', label:'Dinheiro'},
+  {id:'pix', label:'PIX'},
+  {id:'debito', label:'Débito'},
+  {id:'credito', label:'Cartão de crédito'},
+  {id:'transferencia', label:'Transferência'},
+  {id:'outro', label:'Outro'}
+];
+function paymentMethodLabel(id){ const p = PAYMENT_METHODS.find(p=>p.id===id); return p ? p.label : 'Outro'; }
+
+const ACCOUNT_KINDS = [
+  {id:'corrente', label:'Conta corrente'},
+  {id:'poupanca', label:'Poupança'},
+  {id:'carteira', label:'Carteira'},
+  {id:'outro', label:'Outro'}
+];
+function accountKindLabel(id){ const k = ACCOUNT_KINDS.find(k=>k.id===id); return k ? k.label : 'Outro'; }
+
+const INSTALLMENT_OPTIONS = [1,2,3,4,5,6,7,8,9,10,11,12];
+
+// ---------------- Migração (parcelamentos/cartões/contas/auditoria) ----------------
+// Mesma filosofia de migrateCategories: preenche o que falta sem apagar o
+// que já existe, pra contas antigas continuarem funcionando sem perder
+// histórico. Idempotente — pode rodar em toda carga sem efeito colateral.
+function migrateFinance(data){
+  if(!Array.isArray(data.accounts)) data.accounts = [];
+  if(!Array.isArray(data.purchases)) data.purchases = [];
+  if(!data.invoices || typeof data.invoices !== 'object'){
+    // cardBills era o formato antigo (valor da fatura digitado à mão).
+    // Migra só o estado "paga" — o valor passa a ser sempre calculado.
+    data.invoices = {};
+    if(data.cardBills && typeof data.cardBills === 'object'){
+      Object.keys(data.cardBills).forEach(k=>{
+        data.invoices[k] = {paid: !!data.cardBills[k].paid};
+      });
+    }
+  }
+  delete data.cardBills;
+
+  // Conta padrão: sem pelo menos uma, o fluxo de "pagar fatura" fica
+  // travado logo de cara. Segue o mesmo espírito do seed de categorias.
+  if(data.accounts.length===0){
+    data.accounts.push({
+      id:'acc-default', name:'Conta principal', kind:'corrente',
+      personId:(data.settings?.people?.[0]?.id)||'p1', status:'ativa',
+      color: pickCategoryColor(data.accounts), created_at:nowIso(), updated_at:nowIso()
+    });
+  }
+
+  (data.cards||[]).forEach(c=>{
+    if(c.limit==null) c.limit = 0;
+    if(!c.status) c.status = 'ativa';
+    if(!c.color) c.color = pickCategoryColor(data.cards);
+    if(!c.created_at) c.created_at = nowIso();
+    if(!c.updated_at) c.updated_at = nowIso();
+  });
+
+  (data.transactions||[]).forEach(t=>{
+    if(t.paymentMethod===undefined) t.paymentMethod = 'dinheiro';
+    if(t.cardId===undefined) t.cardId = null;
+    if(t.purchaseId===undefined) t.purchaseId = null;
+    if(t.installmentNumber===undefined) t.installmentNumber = null;
+    if(t.installmentCount===undefined) t.installmentCount = null;
+    if(t.invoiceMonthKey===undefined) t.invoiceMonthKey = null;
+    if(t.kind===undefined) t.kind = 'compra';
+    if(t.accountId===undefined) t.accountId = null;
+    if(t.deletedAt===undefined) t.deletedAt = null;
+  });
+
+  return data;
+}
+
+function nonDeletedTx(){ return (DATA.transactions||[]).filter(t=>!t.deletedAt); }
+
+// ---------------- Contas ----------------
+function activeAccounts(){ return (DATA.accounts||[]).filter(a=>a.status==='ativa'); }
+function getAccount(id){ return (DATA.accounts||[]).find(a=>a.id===id) || null; }
+function accountName(id){ const a = getAccount(id); return a ? a.name : '—'; }
+function accountUsage(id){
+  return nonDeletedTx().filter(t=>t.accountId===id).length;
+}
+
+// ---------------- Cartões ----------------
+function getCard(id){ return (DATA.cards||[]).find(c=>c.id===id) || null; }
+function activeCards(){ return (DATA.cards||[]).filter(c=>c.status==='ativa'); }
+function getPurchase(id){ return (DATA.purchases||[]).find(p=>p.id===id) || null; }
+
+function addMonthsToKey(mKey, n){
+  const [y,m] = mKey.split('-').map(Number);
+  return monthKey(new Date(y, (m-1)+n, 1));
+}
+
+// Regra de fechamento: compra depois do dia de fechamento entra na fatura
+// do mês seguinte. A parcela N (0-based) simplesmente soma N meses à
+// fatura da primeira parcela. Ver PLANO.md seção 3.
+function invoiceMonthForInstallment(card, purchaseDateStr, installmentIndex){
+  const d = new Date(purchaseDateStr+'T00:00:00');
+  let baseKey = monthKey(d);
+  if(d.getDate() > card.closingDay) baseKey = addMonthsToKey(baseKey, 1);
+  return addMonthsToKey(baseKey, installmentIndex);
+}
+function invoiceClosingDate(card, mKey){
+  const [y,m] = mKey.split('-').map(Number);
+  return safeMonthDate(y, m-1, card.closingDay);
+}
+function invoiceDueDate(card, mKey){
+  const [y,m] = mKey.split('-').map(Number);
+  return safeMonthDate(y, m-1, card.dueDay);
+}
+function cardTransactionsForMonth(cardId, mKey){
+  return nonDeletedTx().filter(t=>t.cardId===cardId && t.kind==='compra' && t.invoiceMonthKey===mKey);
+}
+// O valor da fatura NUNCA é digitado — é sempre a soma dos lançamentos
+// daquele cartão que caem naquele mês-fatura (item 1 e item 4 do pedido).
+function invoiceTotal(cardId, mKey){
+  return cardTransactionsForMonth(cardId, mKey).reduce((s,t)=>s+Number(t.amount),0);
+}
+function invoiceRecord(cardId, mKey){
+  return (DATA.invoices||{})[`${cardId}-${mKey}`] || {paid:false};
+}
+function invoiceStatus(card, mKey){
+  const rec = invoiceRecord(card.id, mKey);
+  if(rec.paid) return 'paga';
+  const today = new Date(); today.setHours(0,0,0,0);
+  if(today > invoiceDueDate(card, mKey)) return 'atrasada';
+  if(today >= invoiceClosingDate(card, mKey)) return 'fechada';
+  return 'aberta';
+}
+const INVOICE_STATUS_LABEL = {aberta:'Aberta', fechada:'Fechada', paga:'Paga', atrasada:'Em atraso'};
+// "Adiantar" (em vez de "pagar/marcar como paga") sempre que o pagamento
+// acontecer ANTES do vencimento original daquela fatura — mesmo que ela já
+// tenha fechado (fechar e vencer são dias diferentes; adiantamento é
+// qualquer pagamento feito antes do dia de vencimento).
+function isEarlyInvoicePayment(card, mKey){
+  const today = new Date(); today.setHours(0,0,0,0);
+  return today < invoiceDueDate(card, mKey);
+}
+
+function listCardInvoiceMonthKeys(cardId){
+  const keys = new Set();
+  nonDeletedTx().filter(t=>t.cardId===cardId && t.kind==='compra').forEach(t=>keys.add(t.invoiceMonthKey));
+  return Array.from(keys).sort();
+}
+// Mês-fatura "natural" de hoje pelo calendário: se hoje já passou do dia de
+// fechamento deste mês, o ciclo corrente já é o do mês seguinte (mesma regra
+// de invoiceMonthForInstallment, só que sem depender de uma compra existir).
+function calendarInvoiceKey(card, today){
+  today = today || new Date();
+  let key = monthKey(today);
+  if(today.getDate() > card.closingDay) key = addMonthsToKey(key, 1);
+  return key;
+}
+// "Fatura atual" = a mais antiga fatura ainda em aberto (não paga — pode ser
+// de um mês anterior, fatura atrasada) OU, se não houver nenhuma pendente, o
+// ciclo corrente do calendário (mesmo que ele ainda não tenha nenhum
+// lançamento). "Próxima fatura" é sempre o mês seguinte ao atual.
+// Importante: uma vez que a única fatura pendente é paga, ela NUNCA deve
+// "voltar" disfarçada de fatura atual/próxima — por isso currentKey só
+// considera chaves com invoiceRecord(...).paid===false, nunca reaproveita uma
+// chave paga como fallback (era o bug: sem nenhuma pendente, currentKey caía
+// direto no mês corrente do calendário — que podia ser o mesmo mês que tinha
+// acabado de ser pago em outro cenário — e o cálculo de "próxima" via índice
+// na lista de meses com lançamento podia recomeçar do zero e reexibir a
+// fatura recém-paga como se fosse a próxima a vencer).
+function currentAndNextInvoice(card){
+  const keys = listCardInvoiceMonthKeys(card.id);
+  const openKeys = keys.filter(k=>!invoiceRecord(card.id,k).paid);
+  const calendarKey = calendarInvoiceKey(card, new Date());
+  const currentKey = [...openKeys, calendarKey].sort()[0];
+  const nextKey = addMonthsToKey(currentKey, 1);
+  return {currentKey, nextKey};
+}
+// Uma parcela só conta como "paga" se ela existia no momento em que a fatura
+// foi marcada como paga (invoices[key].paidTxIds, gravado em confirmPayInvoice)
+// — nunca só por cair no mesmo mês de uma fatura já paga. Sem essa checagem,
+// uma compra lançada DEPOIS de pagar a fatura adiantado (mas antes do
+// fechamento real do ciclo) seria erroneamente tratada como já paga,
+// subestimando o limite comprometido do cartão. Dados antigos migrados de
+// cardBills não têm paidTxIds — nesse caso cai no comportamento anterior
+// (mês inteiro considerado pago) para não quebrar histórico pré-existente.
+function isInstallmentPaid(t){
+  const rec = invoiceRecord(t.cardId, t.invoiceMonthKey);
+  if(!rec.paid) return false;
+  if(Array.isArray(rec.paidTxIds)) return rec.paidTxIds.includes(t.id);
+  return true; // fatura paga migrada de dados antigos, sem snapshot de parcelas
+}
+// Limite comprometido: o valor TOTAL da compra é reservado no ato (item 6),
+// e cada fatura paga libera exatamente a fatia daquela parcela. Parcelas
+// futuras canceladas (soft-deleted) não continuam comprometendo limite.
+function cardUsedLimit(cardId){
+  const purchases = (DATA.purchases||[]).filter(p=>p.cardId===cardId);
+  let used = 0;
+  purchases.forEach(p=>{
+    const insts = nonDeletedTx().filter(t=>t.purchaseId===p.id);
+    const totalActive = insts.reduce((s,t)=>s+Number(t.amount),0);
+    const paidAmount = insts.filter(isInstallmentPaid).reduce((s,t)=>s+Number(t.amount),0);
+    used += Math.max(0, totalActive - paidAmount);
+  });
+  return used;
+}
+function cardAvailableLimit(cardId){
+  const card = getCard(cardId);
+  if(!card) return 0;
+  return Math.max(0, (card.limit||0) - cardUsedLimit(cardId));
+}
+
+// Um lançamento "pesa" no saldo bancário do mês a não ser que seja a perna
+// de uma compra no cartão ainda não paga — essa só pesa quando a fatura é
+// de fato paga (kind:'pagamento_fatura'). Ver PLANO.md seção 5.
+function isCashImpacting(t){
+  return !(t.paymentMethod==='credito' && t.kind==='compra');
+}
+// O pagamento da fatura é só a liquidação em dinheiro de compras que já
+// foram contadas na categoria/orçamento/gráfico quando aconteceram — contá-lo
+// de novo ali seria duplicar o gasto. Ele SÓ deve aparecer na visão de caixa
+// (isCashImpacting), nunca na visão por categoria.
+function isCategoryRelevant(t){
+  return t.kind !== 'pagamento_fatura';
+}
+
+// ---------------- Auditoria (cliente) ----------------
+// Quem age (Pedro/Ana) é declarado pelo próprio cliente através deste
+// seletor — o login é único por conta, então o servidor não tem como saber
+// sozinho qual pessoa está com o celular na mão agora (ver PLANO.md seção 6).
+// O que É confiável e vem sempre do servidor: a conta (sessão) e o horário.
+function getActivePersonId(){
+  const people = getPeople();
+  if(people.length===0) return null;
+  if(people.length===1) return people[0].id;
+  let id = null;
+  try{ id = localStorage.getItem('cofre_active_person'); }catch(e){}
+  if(!id || !people.some(p=>p.id===id)) id = people[0].id;
+  return id;
+}
+function setActivePerson(id){
+  try{ localStorage.setItem('cofre_active_person', id); }catch(e){}
+  render();
+}
+function personSwitcherHtml(){
+  const people = getPeople();
+  if(people.length<=1) return '';
+  const activeId = getActivePersonId();
+  return `
+    <div class="field" style="margin-top:10px;">
+      <label style="font-size:10.5px; text-transform:uppercase; letter-spacing:.04em; color:#5c6d61;">Você é</label>
+      <select id="person-switcher" onchange="setActivePerson(this.value)" style="font-size:12.5px;">
+        ${people.map(p=>`<option value="${p.id}" ${p.id===activeId?'selected':''}>${esc(p.name)}</option>`).join('')}
+      </select>
+    </div>
+  `;
+}
+// Envia um evento de auditoria. Nunca deve travar a ação principal do
+// usuário — se a rede falhar, a mutação em si já foi salva normalmente,
+// só o rastro de auditoria fica faltando (e isso é logado no console).
+async function logAudit(action, module_, entityType, entityId, description, changes, extra){
+  extra = extra || {};
+  try{
+    const personId = getActivePersonId();
+    await api('/audit', {method:'POST', body:{
+      actorPersonId: personId,
+      actorPersonName: personId ? personName(personId) : (SESSION && SESSION.name) || '—',
+      action, module: module_, entityType,
+      entityId: entityId!=null ? String(entityId) : null,
+      description,
+      changes: (changes && changes.length) ? changes : undefined,
+      cardId: extra.cardId || null,
+      accountId: extra.accountId || null,
+      categoryId: extra.categoryId || null
+    }});
+  }catch(e){
+    console.error('Falha ao registrar auditoria', e);
+  }
+}
+// Compara campos de "antes" e "depois" e monta a lista de mudanças no
+// formato que a auditoria espera ({field, from, to}), pulando o que não mudou.
+function diffChanges(before, after, fields){
+  const out = [];
+  fields.forEach(f=>{
+    const a = before ? before[f.key] : undefined;
+    const b = after ? after[f.key] : undefined;
+    const na = a==null ? '' : String(a);
+    const nb = b==null ? '' : String(b);
+    if(na !== nb){
+      out.push({field:f.label, from: f.fmt?f.fmt(a):(a==null?'—':String(a)), to: f.fmt?f.fmt(b):(b==null?'—':String(b))});
+    }
+  });
+  return out;
+}
+
 async function saveData(){
   SAVING = true; updateSaveIndicator();
   try{
@@ -399,13 +713,13 @@ function getUpcomingReminders(){
     const due = safeMonthDate(first.getFullYear(), first.getMonth()+inst.paid, first.getDate());
     if(due>=today && due<=horizon) items.push({title:`Parcela: ${inst.description} (${inst.paid+1}/${inst.count})`, date:due, amount:inst.monthlyAmount});
   });
-  DATA.cards.forEach(card=>{
+  activeCards().forEach(card=>{
     let due = safeMonthDate(today.getFullYear(), today.getMonth(), card.dueDay);
     if(due < today) due = safeMonthDate(today.getFullYear(), today.getMonth()+1, card.dueDay);
     if(due>=today && due<=horizon){
       const mk = monthKey(due);
-      const bill = DATA.cardBills[`${card.id}-${mk}`];
-      if(!bill || !bill.paid) items.push({title:`Fatura: ${card.name}`, date:due, amount: bill?bill.amount:null});
+      const rec = invoiceRecord(card.id, mk);
+      if(!rec.paid) items.push({title:`Fatura: ${card.name}`, date:due, amount: invoiceTotal(card.id, mk)});
     }
   });
   items.sort((a,b)=>a.date-b.date);
@@ -419,8 +733,18 @@ function getUpcomingReminders(){
 }
 
 // ---------------- Modal helpers ----------------
-function openModal(html){
-  closeModal();
+// Pilha simples de modais: quando um formulário abre outro por cima (ex:
+// "+ nova categoria" dentro do lançamento), o pai fica escondido em vez de
+// destruído — assim os campos já preenchidos não se perdem quando o filho
+// fecha e devolve o controle pra ele (ver openCategoryForm).
+let MODAL_STACK = [];
+function openModal(html, opts){
+  const stack = !!(opts && opts.stack);
+  const prev = document.getElementById('active-modal');
+  if(prev){
+    if(stack){ prev.removeAttribute('id'); prev.style.display='none'; MODAL_STACK.push(prev); }
+    else { prev.remove(); MODAL_STACK.forEach(m=>m.remove()); MODAL_STACK = []; }
+  }
   const wrap = document.createElement('div');
   wrap.className = 'modal-overlay';
   wrap.id = 'active-modal';
@@ -428,8 +752,94 @@ function openModal(html){
   wrap.innerHTML = `<div class="modal">${html}</div>`;
   document.body.appendChild(wrap);
 }
-function closeModal(){ const m = document.getElementById('active-modal'); if(m) m.remove(); }
+function closeModal(){
+  const m = document.getElementById('active-modal');
+  if(m) m.remove();
+  const parent = MODAL_STACK.pop();
+  if(parent){ parent.id = 'active-modal'; parent.style.display = ''; }
+}
 function val(id){ const el = document.getElementById(id); return el ? el.value : ''; }
+
+// Confirmação/aviso estilizados — substituem confirm()/alert() nativos do
+// navegador, que aparecem como uma barra/flag do sistema completamente fora
+// do visual do app. Empilham por cima do modal atual quando já existe um
+// aberto (ex.: excluir a partir de dentro do formulário de edição), pra
+// devolver esse modal se o usuário cancelar, e desfazem os dois níveis se
+// confirmar — cada callback chama closeModal() de novo, como já fazia antes
+// (a pilha suporta isso naturalmente).
+let CONFIRM_DIALOG_CALLBACKS = {};
+function confirmDialog(message, onConfirm, opts){
+  opts = opts || {};
+  const id = uid();
+  CONFIRM_DIALOG_CALLBACKS[id] = onConfirm;
+  const stack = !!document.getElementById('active-modal');
+  openModal(`
+    <h3>${esc(opts.title || 'Confirmar ação')}</h3>
+    <div class="sub" style="margin:8px 0 20px;">${esc(message)}</div>
+    <div class="modal-actions">
+      <button class="btn secondary" onclick="cancelConfirmDialog('${id}')">${esc(opts.cancelLabel || 'Cancelar')}</button>
+      <button class="btn ${opts.danger ? 'danger' : ''}" onclick="runConfirmDialog('${id}')">${esc(opts.confirmLabel || 'Confirmar')}</button>
+    </div>
+  `, {stack});
+}
+function runConfirmDialog(id){
+  const cb = CONFIRM_DIALOG_CALLBACKS[id];
+  delete CONFIRM_DIALOG_CALLBACKS[id];
+  closeModal();
+  if(cb) cb();
+}
+function cancelConfirmDialog(id){
+  delete CONFIRM_DIALOG_CALLBACKS[id];
+  closeModal();
+}
+function alertDialog(message, opts){
+  opts = opts || {};
+  const stack = !!document.getElementById('active-modal');
+  openModal(`
+    <h3>${esc(opts.title || 'Aviso')}</h3>
+    <div class="sub" style="margin:8px 0 20px;">${esc(message)}</div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal()">${esc(opts.okLabel || 'Entendi')}</button>
+    </div>
+  `, {stack});
+}
+
+// ---------------- Aviso de novidade (toast, não é fixo na tela) ----------------
+// Um avisinho discreto, mostrado uma única vez por navegador (guardado em
+// localStorage — mesmo esquema do seletor de pessoa ativa), avisando sobre o
+// módulo financeiro novo. Some sozinho depois de alguns segundos ou ao
+// clicar no X — nunca fica "preso" na tela feito um banner permanente.
+let UPDATE_NOTICE_INJECTED = false;
+const UPDATE_NOTICE_KEY = 'cofre_notice_seen_financeiro_v1';
+function maybeShowUpdateNotice(){
+  if(UPDATE_NOTICE_INJECTED) return;
+  if(!SESSION || !DATA || !DATA.settings) return; // só depois do onboarding, com o app de verdade na tela
+  let seen = false;
+  try{ seen = localStorage.getItem(UPDATE_NOTICE_KEY) === '1'; }catch(e){}
+  if(seen) return;
+  UPDATE_NOTICE_INJECTED = true;
+  try{ localStorage.setItem(UPDATE_NOTICE_KEY, '1'); }catch(e){}
+
+  const wrap = document.createElement('div');
+  wrap.className = 'update-toast';
+  wrap.innerHTML = `
+    <div class="update-toast-icon">${icon('card',17)}</div>
+    <div class="update-toast-body">
+      <div class="update-toast-title">Novidade no Cofre</div>
+      <div class="update-toast-text">Cartão de crédito agora tem fatura automática, parcelamento e uma aba de Auditoria — dá uma olhada em "Cartões" no menu.</div>
+    </div>
+    <button class="update-toast-close" aria-label="Fechar aviso" onclick="dismissUpdateNotice()">${icon('x',14)}</button>
+  `;
+  document.body.appendChild(wrap);
+  requestAnimationFrame(()=> wrap.classList.add('show'));
+  setTimeout(dismissUpdateNotice, 9000);
+}
+function dismissUpdateNotice(){
+  const el = document.querySelector('.update-toast');
+  if(!el) return;
+  el.classList.remove('show');
+  setTimeout(()=>el.remove(), 350);
+}
 
 // ================= AUTH SCREENS =================
 function renderAuthGate(){
@@ -499,7 +909,7 @@ async function submitRegister(){
   try{
     const res = await api('/auth/register', {method:'POST', body:{name, email, password}});
     SESSION = res.user;
-    DATA = migrateCategories(DEFAULT_DATA());
+    DATA = migrateFinance(migrateCategories(DEFAULT_DATA()));
     TAB = 'dashboard';
     render();
   }catch(e){
@@ -610,10 +1020,11 @@ function getNav(){
     {id:'transacoes', label:'Entradas & Saídas', icon:'swap'},
     {id:'orcamentos', label:'Orçamentos', icon:'target'},
     {id:'parcelas', label:'Parcelas', icon:'layers'},
-    {id:'cartao', label:'Cartão', icon:'card'},
+    {id:'cartao', label:'Cartões', icon:'card'},
     {id:'caixinhas', label:'Caixinhas', icon:'jar'},
     {id:'dizimo', label:'Dízimo', icon:'heart'},
     {id:'lembretes', label:'Lembretes', icon:'bell'},
+    {id:'auditoria', label:'Auditoria', icon:'history'},
     {id:'ia', label:'Conselheira IA', icon:'sparkles'},
   ];
   if(SESSION && SESSION.role==='admin') nav.push({id:'admin', label:'Painel Admin', icon:'shield'});
@@ -640,7 +1051,11 @@ function render(){
   if(!DATA.settings){ root.innerHTML = renderOnboarding(); return; }
 
   const NAV = getNav();
-  const showMonthPicker = ['dashboard','transacoes','cartao','dizimo','orcamentos'].includes(TAB);
+  // "cartao" fica de fora: o painel de cada cartão já navega sozinho pra
+  // "fatura atual"/"próxima fatura" (currentAndNextInvoice) — um seletor de
+  // mês ali do lado não mudava nada na tela e só confundia (parecia que dava
+  // pra "procurar" uma fatura de outro mês navegando por ele).
+  const showMonthPicker = ['dashboard','transacoes','dizimo','orcamentos'].includes(TAB);
   const navHtml = NAV.map(n => `<button class="nav-btn ${TAB===n.id?'active':''}" onclick="switchTab('${n.id}')"><span class="nav-icon">${icon(n.icon)}</span>${n.label}</button>`).join('');
 
   root.innerHTML = `
@@ -657,6 +1072,7 @@ function render(){
         <div style="margin-top:auto; padding-top:14px; font-size:11px; color:#5c6d61; line-height:1.6;">
           <div>${esc(SESSION.name)} ${SESSION.role==='admin'?'<span class="role-badge">admin</span>':''}</div>
           <div id="save-indicator">sincronizado</div>
+          ${personSwitcherHtml()}
         </div>
       </div>
       <div class="main">
@@ -686,8 +1102,10 @@ function render(){
   else if(TAB==='caixinhas') content.innerHTML = renderCaixinhas();
   else if(TAB==='dizimo') content.innerHTML = renderDizimo(mKey);
   else if(TAB==='lembretes') content.innerHTML = renderLembretes();
+  else if(TAB==='auditoria'){ content.innerHTML = '<div class="empty">Carregando...</div>'; loadAndRenderAudit(); }
   else if(TAB==='ia') content.innerHTML = renderConselheira();
   else if(TAB==='admin'){ content.innerHTML = '<div class="empty">Carregando...</div>'; loadAndRenderAdmin(); }
+  maybeShowUpdateNotice();
 }
 
 // ---------------- Dashboard ----------------
@@ -841,13 +1259,21 @@ function renderDashboardBudgets(monthTx){
 }
 
 function renderDashboard(mKey){
-  const monthTx = DATA.transactions.filter(t => t.date.startsWith(mKey));
-  const entradas = monthTx.filter(t=>t.type==='entrada').reduce((s,t)=>s+Number(t.amount),0);
-  const saidas = monthTx.filter(t=>t.type==='saida').reduce((s,t)=>s+Number(t.amount),0);
+  // Duas visões da mesma lista, de propósito (ver PLANO.md seção 5):
+  // - monthTx (accrual): tudo que "conta" pra categoria/orçamento/gráfico,
+  //   incluindo compras no cartão ainda não pagas — é o retrato do que foi
+  //   decidido gastar.
+  // - cashTx (caixa): só o que de fato entrou/saiu da conta bancária —
+  //   compra no cartão não paga fica de fora até a fatura ser quitada.
+  const rawMonthTx = nonDeletedTx().filter(t => t.date.startsWith(mKey));
+  const monthTx = rawMonthTx.filter(isCategoryRelevant);
+  const cashTx = rawMonthTx.filter(isCashImpacting);
+  const entradas = cashTx.filter(t=>t.type==='entrada').reduce((s,t)=>s+Number(t.amount),0);
+  const saidas = cashTx.filter(t=>t.type==='saida').reduce((s,t)=>s+Number(t.amount),0);
   const saldo = entradas - saidas;
   const people = getPeople();
   const titheOwed = people.reduce((sum,p)=>{
-    const inc = monthTx.filter(t=>t.type==='entrada' && (people.length===1 || t.personId===p.id)).reduce((s,t)=>s+Number(t.amount),0);
+    const inc = cashTx.filter(t=>t.type==='entrada' && (people.length===1 || t.personId===p.id)).reduce((s,t)=>s+Number(t.amount),0);
     const paid = DATA.titheStatus[`${p.id}-${mKey}`];
     return sum + (paid ? 0 : inc*0.1);
   },0);
@@ -862,6 +1288,7 @@ function renderDashboard(mKey){
       <div>
         <div class="stat-label">Saldo do mês</div>
         <div class="stat-hero" style="color:${saldo<0?'var(--garnet)':'var(--verdigris)'}">${fmt(saldo)}</div>
+        <div class="sub" style="margin-top:2px;">Considera só o que já saiu de fato da conta — compras no cartão entram quando a fatura é paga.</div>
       </div>
       <div class="hero-balance-secondary">
         <div class="mini-stat"><div class="mini-stat-label">Entradas</div><div class="mini-stat-value" style="color:var(--verdigris)">${fmt(entradas)}</div></div>
@@ -918,9 +1345,31 @@ function renderDashboard(mKey){
 
 // ---------------- Transações ----------------
 let txFilterPerson = 'all', txFilterType = 'all';
+// Compras no cartão viram UMA linha por compra (não uma por parcela), datada
+// e valorada pela compra em si (não pela fatura) — é a visão "o que eu
+// decidi gastar", separada da visão de fatura/parcela que continua existindo
+// só dentro da aba Cartões. Ver PLANO.md seção 5-bis.
+function txListForMonth(mKey){
+  const plain = nonDeletedTx()
+    .filter(t=> !(t.paymentMethod==='credito' && t.kind==='compra'))
+    .filter(t=> t.date.startsWith(mKey));
+  const cardRows = (DATA.purchases||[])
+    .filter(p=> !p.deletedAt && p.date.startsWith(mKey))
+    .map(p=>{
+      const insts = nonDeletedTx().filter(t=>t.purchaseId===p.id);
+      if(insts.length===0) return null; // todas as parcelas foram excluídas/canceladas
+      return {
+        id: insts[0].id, type:'saida', personId:p.personId, categoryId:p.categoryId,
+        description:p.description, amount:p.amount, date:p.date,
+        paymentMethod:'credito', cardId:p.cardId, purchaseId:p.id,
+        installmentCount:p.installmentCount, isCardPurchase:true
+      };
+    }).filter(Boolean);
+  return [...plain, ...cardRows];
+}
 function renderTransacoes(mKey){
   const people = getPeople();
-  const monthTx = DATA.transactions.filter(t=>t.date.startsWith(mKey))
+  const monthTx = txListForMonth(mKey)
     .filter(t=> txFilterPerson==='all'||t.personId===txFilterPerson)
     .filter(t=> txFilterType==='all'||t.type===txFilterType)
     .sort((a,b)=> b.date.localeCompare(a.date));
@@ -944,72 +1393,321 @@ function renderTransacoes(mKey){
     </div>
     <div class="row-list list-grouped">
       ${monthTx.length===0 ? '<div class="empty"><span class="empty-title">Nada por aqui ainda</span>Registre o primeiro lançamento do mês — mesmo os pequenos contam.</div>' :
-        monthTx.map(t=>`
+        monthTx.map(t=>{
+          const card = t.cardId ? getCard(t.cardId) : null;
+          const paymentBit = t.type==='saida' ? (
+            card ? `· ${esc(card.name)}${t.installmentCount>1?` ${t.installmentCount}x`:''}` : `· ${paymentMethodLabel(t.paymentMethod)}`
+          ) : '';
+          return `
         <div class="item-row">
           <div class="item-left">
             <span class="item-tag ${t.type==='entrada'?'tag-entrada':'tag-saida'}">${t.type==='entrada'?'Entrada':'Saída'}</span>
             <div>
-              <div class="item-desc">${esc(t.description)}</div>
-              <div class="item-meta"><span class="cat-chip"><span class="cat-dot" style="background:${categoryColor(t.categoryId)}"></span>${esc(categoryName(t.categoryId))}</span> ${people.length>1?'· '+esc(personName(t.personId)):''} · ${new Date(t.date+'T00:00:00').toLocaleDateString('pt-BR')}</div>
+              <div class="item-desc">${esc(t.description)} ${t.isCardPurchase?'<span class="pending-badge" title="Compromete o limite agora; só sai da conta quando a fatura for paga">no cartão · ainda não debitado</span>':''}</div>
+              <div class="item-meta"><span class="cat-chip"><span class="cat-dot" style="background:${categoryColor(t.categoryId)}"></span>${esc(categoryName(t.categoryId))}</span> ${people.length>1?'· '+esc(personName(t.personId)):''} · ${new Date(t.date+'T00:00:00').toLocaleDateString('pt-BR')} ${paymentBit}</div>
             </div>
           </div>
-          <div style="display:flex; align-items:center; gap:12px;">
-            <div class="item-amount" style="color:${t.type==='entrada'?'var(--verdigris)':'var(--garnet)'}">${t.type==='entrada'?'+':'-'}${fmt(t.amount)}</div>
-            <button class="icon-btn" onclick="removeTx('${t.id}')">✕</button>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <div class="item-amount" style="color:${t.type==='entrada'?'var(--verdigris)':(t.isCardPurchase?'var(--ink-soft)':'var(--garnet)')}">${t.type==='entrada'?'+':'-'}${fmt(t.amount)}</div>
+            <button class="icon-btn" onclick="openTxForm('${t.id}')" aria-label="Editar">${icon('edit',15)}</button>
+            <button class="icon-btn" onclick="removeTx('${t.id}')" aria-label="Excluir">${icon('x',15)}</button>
           </div>
-        </div>`).join('')}
+        </div>`;
+        }).join('')}
     </div>
   `;
 }
-function openTxForm(){
+function openTxForm(editId){
   const people = getPeople();
+  const cards = activeCards();
+  const editingTx = editId ? nonDeletedTx().find(t=>t.id===editId) : null;
+  const editingPurchase = editingTx && editingTx.purchaseId ? (DATA.purchases||[]).find(p=>p.id===editingTx.purchaseId && !p.deletedAt) : null;
+
+  if(editingPurchase){
+    // Compra no cartão: só descrição/responsável/categoria podem mudar depois
+    // de criada. Valor, cartão e parcelamento ficam travados — mexer neles
+    // exigiria refazer o cálculo de todas as faturas já geradas; mais seguro
+    // excluir e lançar de novo quando isso for realmente necessário (item 10).
+    openModal(`
+      <h3>Editar compra no cartão</h3>
+      <div class="sub" style="margin-bottom:14px;">${esc(getCard(editingPurchase.cardId)?.name||'Cartão')} · ${fmt(editingPurchase.amount)} em ${editingPurchase.installmentCount}x. Valor, cartão e parcelamento não podem ser alterados — exclua e lance novamente se precisar mudar isso.</div>
+      <div class="form-grid">
+        <div class="field"><label>Responsável</label>
+          <select id="tx-person">${people.map(p=>`<option value="${p.id}" ${p.id===editingPurchase.personId?'selected':''}>${esc(p.name)}</option>`).join('')}</select>
+        </div>
+        <div class="field">
+          <label>Categoria <button type="button" class="inline-link" onclick="openCategoryForm('saida','tx-category')">+ nova</button></label>
+          <select id="tx-category">${categoryOptionsHtml('saida', editingPurchase.categoryId)}</select>
+        </div>
+      </div>
+      <div class="form-grid full"><div class="field"><label>Descrição</label><input id="tx-desc" value="${esc(editingPurchase.description)}"></div></div>
+      <input type="hidden" id="tx-edit-purchase-id" value="${editingPurchase.id}">
+      <div class="error-msg" id="tx-error"></div>
+      <div class="modal-actions">
+        <button class="btn secondary" onclick="closeModal()">Cancelar</button>
+        <button class="btn" onclick="saveTx()">Salvar</button>
+      </div>
+    `);
+    return;
+  }
+
+  const t = editingTx;
+  const type0 = t ? t.type : 'saida';
   openModal(`
-    <h3>Novo lançamento</h3>
+    <h3>${t?'Editar lançamento':'Novo lançamento'}</h3>
+    <input type="hidden" id="tx-edit-id" value="${t?t.id:''}">
     <div class="form-grid">
       <div class="field"><label>Tipo</label>
-        <select id="tx-type" onchange="updateTxCategoryOptions()">
-          <option value="saida">Saída</option><option value="entrada">Entrada</option>
+        <select id="tx-type" onchange="updateTxFormDynamic()">
+          <option value="saida" ${type0==='saida'?'selected':''}>Saída</option>
+          <option value="entrada" ${type0==='entrada'?'selected':''}>Entrada</option>
         </select>
       </div>
       <div class="field"><label>Responsável</label>
-        <select id="tx-person">${people.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select>
+        <select id="tx-person">${people.map(p=>`<option value="${p.id}" ${t&&t.personId===p.id?'selected':''}>${esc(p.name)}</option>`).join('')}</select>
       </div>
     </div>
     <div class="form-grid">
       <div class="field">
-        <label>Categoria <button type="button" class="inline-link" id="tx-category-new" onclick="openCategoryForm('saida','tx-category')">+ nova</button></label>
-        <select id="tx-category">${categoryOptionsHtml('saida')}</select>
+        <label>Categoria <button type="button" class="inline-link" id="tx-category-new" onclick="openCategoryForm('${type0}','tx-category')">+ nova</button></label>
+        <select id="tx-category">${categoryOptionsHtml(type0, t?t.categoryId:null)}</select>
       </div>
-      <div class="field"><label>Data</label><input type="date" id="tx-date" value="${new Date().toISOString().slice(0,10)}"></div>
+      <div class="field"><label>Data</label><input type="date" id="tx-date" value="${t?t.date:dateStr(new Date())}"></div>
     </div>
-    <div class="form-grid full"><div class="field"><label>Descrição</label><input id="tx-desc" placeholder="Ex: Supermercado, Salário..."></div></div>
-    <div class="form-grid full"><div class="field"><label>Valor (R$)</label><input type="number" step="0.01" id="tx-amount" placeholder="0,00"></div></div>
+    <div class="form-grid full"><div class="field"><label>Descrição</label><input id="tx-desc" value="${t?esc(t.description):''}" placeholder="Ex: Supermercado, Salário..."></div></div>
+    <div class="form-grid full"><div class="field"><label>Valor (R$)</label><input type="number" step="0.01" id="tx-amount" value="${t?t.amount:''}" placeholder="0,00"></div></div>
+    <div class="form-grid full" id="tx-payment-block">
+      <div class="field"><label>Forma de pagamento</label>
+        <select id="tx-payment" onchange="updateTxFormDynamic()">
+          ${PAYMENT_METHODS.map(pm=>`<option value="${pm.id}" ${t&&t.paymentMethod===pm.id?'selected':''}>${pm.label}</option>`).join('')}
+        </select>
+      </div>
+    </div>
+    <div class="form-grid" id="tx-card-block" style="display:none;">
+      <div class="field"><label>Cartão</label>
+        <select id="tx-card">
+          ${cards.length===0?'<option value="">Nenhum cartão ativo</option>':cards.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="field"><label>Parcelamento</label>
+        <select id="tx-installments" onchange="updateTxInstallmentCustom()">
+          ${INSTALLMENT_OPTIONS.map(n=>`<option value="${n}">${n===1?'À vista (1x)':n+'x'}</option>`).join('')}
+          <option value="custom">Personalizado…</option>
+        </select>
+        <input type="number" min="1" max="60" id="tx-installments-custom" placeholder="Nº de parcelas" style="display:none; margin-top:6px;">
+      </div>
+    </div>
+    <div class="sub" id="tx-no-card-hint" style="display:none; margin-top:-6px;">Nenhum cartão ativo cadastrado — vá em Cartões antes de lançar uma compra no crédito.</div>
     <div class="error-msg" id="tx-error"></div>
     <div class="modal-actions">
       <button class="btn secondary" onclick="closeModal()">Cancelar</button>
-      <button class="btn" onclick="addTx()">Salvar</button>
+      <button class="btn" onclick="saveTx()">Salvar</button>
     </div>
   `);
+  updateTxFormDynamic();
 }
-function updateTxCategoryOptions(){
+function updateTxFormDynamic(){
   const type = val('tx-type');
-  const kind = type==='entrada' ? 'entrada' : 'saida';
-  document.getElementById('tx-category').innerHTML = categoryOptionsHtml(kind);
+  const catSel = document.getElementById('tx-category');
+  // Reconstrói as opções (mudar entrada/saída troca o universo de categorias
+  // válidas), mas preserva a categoria já escolhida — esta função também
+  // dispara ao trocar só a forma de pagamento, que não deveria "esquecer"
+  // a categoria que a pessoa já tinha selecionado.
+  if(catSel){
+    const prevVal = catSel.value;
+    catSel.innerHTML = categoryOptionsHtml(type, prevVal);
+  }
   const link = document.getElementById('tx-category-new');
-  if(link) link.setAttribute('onclick', `openCategoryForm('${kind}','tx-category')`);
+  if(link) link.setAttribute('onclick', `openCategoryForm('${type}','tx-category')`);
+
+  const paymentBlock = document.getElementById('tx-payment-block');
+  const cardBlock = document.getElementById('tx-card-block');
+  const hint = document.getElementById('tx-no-card-hint');
+  if(!paymentBlock) return; // modal de edição de compra não tem esses blocos
+  if(type==='entrada'){
+    paymentBlock.style.display='none';
+    cardBlock.style.display='none';
+    if(hint) hint.style.display='none';
+    return;
+  }
+  paymentBlock.style.display='';
+  const method = val('tx-payment');
+  const showCard = method==='credito';
+  cardBlock.style.display = showCard ? '' : 'none';
+  if(hint) hint.style.display = (showCard && activeCards().length===0) ? '' : 'none';
 }
-function addTx(){
+function updateTxInstallmentCustom(){
+  const custom = document.getElementById('tx-installments-custom');
+  if(custom) custom.style.display = val('tx-installments')==='custom' ? '' : 'none';
+}
+function saveTx(){
+  if(document.getElementById('tx-edit-purchase-id')) return saveTxEditPurchase(val('tx-edit-purchase-id'));
+
+  const errEl = document.getElementById('tx-error');
+  const editId = val('tx-edit-id') || null;
+  const type = val('tx-type');
+  const personId = val('tx-person');
+  const categoryId = val('tx-category');
   const desc = val('tx-desc').trim();
   const amount = Number(val('tx-amount'));
-  const errEl = document.getElementById('tx-error');
+  const dtStr = val('tx-date') || dateStr(new Date());
+  const paymentMethod = type==='entrada' ? 'dinheiro' : (val('tx-payment')||'dinheiro');
+
   if(!desc){ if(errEl) errEl.textContent='Informe uma descrição.'; return; }
   if(isNaN(amount) || amount<=0){ if(errEl) errEl.textContent='Informe um valor maior que zero.'; return; }
-  const dateStr = val('tx-date') || new Date().toISOString().slice(0,10);
-  DATA.transactions.push({id:uid(), type:val('tx-type'), personId:val('tx-person'), categoryId:val('tx-category'), description:desc, amount, date:dateStr});
+  if(!categoryId){ if(errEl) errEl.textContent='Escolha uma categoria.'; return; }
+
+  if(type==='saida' && paymentMethod==='credito'){
+    const cardId = val('tx-card');
+    if(!cardId){ if(errEl) errEl.textContent='Escolha um cartão (cadastre um antes de continuar, se necessário).'; return; }
+    let n = val('tx-installments');
+    n = n==='custom' ? Number(val('tx-installments-custom')) : Number(n);
+    if(!Number.isInteger(n) || n<1 || n>60){ if(errEl) errEl.textContent='Informe uma quantidade de parcelas válida (1 a 60).'; return; }
+
+    if(editId){
+      // Uma transação simples virando compra no cartão: mais simples e seguro
+      // excluir a antiga (soft-delete) e criar a compra do zero.
+      softDeleteTx(editId, {silent:true});
+    }
+    createCardPurchase({cardId, personId, categoryId, description:desc, amount, date:dtStr, installmentCount:n});
+    closeModal();
+    return;
+  }
+
+  if(editId){
+    const t = nonDeletedTx().find(x=>x.id===editId);
+    if(!t){ closeModal(); return; }
+    const before = {type:t.type, personId:t.personId, categoryId:t.categoryId, description:t.description, amount:t.amount, date:t.date, paymentMethod:t.paymentMethod};
+    const after = {type, personId, categoryId, description:desc, amount, date:dtStr, paymentMethod};
+    const changes = diffChanges(before, after, [
+      {key:'type', label:'Tipo', fmt:v=>v==='entrada'?'Entrada':'Saída'},
+      {key:'personId', label:'Responsável', fmt:v=>personName(v)},
+      {key:'categoryId', label:'Categoria', fmt:v=>categoryName(v)},
+      {key:'description', label:'Descrição'},
+      {key:'amount', label:'Valor', fmt:v=>fmt(v)},
+      {key:'date', label:'Data'},
+      {key:'paymentMethod', label:'Forma de pagamento', fmt:v=>paymentMethodLabel(v)}
+    ]);
+    Object.assign(t, after);
+    closeModal();
+    persist();
+    if(changes.length) logAudit('editou','transacoes','lancamento',t.id, `editou "${desc}"`, changes, {categoryId});
+    return;
+  }
+
+  const newTx = {
+    id:uid(), type, personId, categoryId, description:desc, amount, date:dtStr,
+    paymentMethod, cardId:null, purchaseId:null, installmentNumber:null, installmentCount:null,
+    invoiceMonthKey:null, kind:'compra', accountId:null, deletedAt:null
+  };
+  DATA.transactions.push(newTx);
   closeModal();
   persist();
+  logAudit('criou','transacoes','lancamento', newTx.id,
+    `criou ${type==='entrada'?'uma entrada':'uma saída'}: ${desc} (${fmt(amount)})`,
+    null, {categoryId});
 }
-function removeTx(id){ DATA.transactions = DATA.transactions.filter(t=>t.id!==id); persist(); }
+function saveTxEditPurchase(purchaseId){
+  const purchase = (DATA.purchases||[]).find(p=>p.id===purchaseId && !p.deletedAt);
+  const errEl = document.getElementById('tx-error');
+  if(!purchase){ closeModal(); return; }
+  const desc = val('tx-desc').trim();
+  const personId = val('tx-person');
+  const categoryId = val('tx-category');
+  if(!desc){ if(errEl) errEl.textContent='Informe uma descrição.'; return; }
+
+  const before = {description:purchase.description, personId:purchase.personId, categoryId:purchase.categoryId};
+  const changes = diffChanges(before, {description:desc, personId, categoryId}, [
+    {key:'description', label:'Descrição'},
+    {key:'personId', label:'Responsável', fmt:v=>personName(v)},
+    {key:'categoryId', label:'Categoria', fmt:v=>categoryName(v)}
+  ]);
+
+  purchase.description = desc;
+  purchase.personId = personId;
+  purchase.categoryId = categoryId;
+  purchase.updated_at = nowIso();
+  nonDeletedTx().filter(t=>t.purchaseId===purchaseId).forEach(t=>{
+    t.description = desc; t.personId = personId; t.categoryId = categoryId;
+  });
+
+  closeModal();
+  persist();
+  if(changes.length) logAudit('editou','cartoes','compra',purchaseId, `editou a compra "${desc}"`, changes, {cardId:purchase.cardId, categoryId});
+}
+// Cria a compra (registro-pai) + N parcelas (transações), cada uma já
+// atribuída à fatura correta pelo dia de fechamento do cartão (item 3/4).
+function createCardPurchase({cardId, personId, categoryId, description, amount, date, installmentCount}){
+  const card = getCard(cardId);
+  if(!card) return;
+  const purchaseId = uid();
+  const cents = Math.round(Number(amount)*100);
+  const baseCents = Math.floor(cents/installmentCount);
+  let remainder = cents - baseCents*installmentCount;
+
+  DATA.purchases.push({
+    id:purchaseId, cardId, personId, categoryId, description, amount:Number(amount),
+    date, installmentCount, created_at:nowIso(), updated_at:nowIso(), deletedAt:null
+  });
+
+  for(let i=0;i<installmentCount;i++){
+    let instCents = baseCents;
+    if(remainder>0){ instCents += 1; remainder -= 1; } // distribui o resto de centavos nas primeiras parcelas
+    const invoiceMonthKey = invoiceMonthForInstallment(card, date, i);
+    const due = invoiceDueDate(card, invoiceMonthKey);
+    DATA.transactions.push({
+      id:uid(), type:'saida', personId, categoryId, description,
+      amount: instCents/100, date: dateStr(due),
+      paymentMethod:'credito', cardId, purchaseId,
+      installmentNumber:i+1, installmentCount, invoiceMonthKey,
+      kind:'compra', accountId:null, deletedAt:null
+    });
+  }
+
+  persist();
+  const label = installmentCount>1 ? `${fmt(amount)} em ${installmentCount}x no ${card.name}` : `${fmt(amount)} no ${card.name}`;
+  logAudit('criou','cartoes','compra', purchaseId, `criou a compra "${description}" — ${label}`, null, {cardId, categoryId});
+}
+function softDeleteTx(id, opts){
+  opts = opts||{};
+  const t = (DATA.transactions||[]).find(x=>x.id===id);
+  if(!t) return;
+  t.deletedAt = nowIso();
+  if(!opts.silent) persist();
+}
+function removeTx(id){
+  const t = nonDeletedTx().find(x=>x.id===id);
+  if(!t) return;
+  if(t.purchaseId){ removeCardPurchase(t.purchaseId); return; }
+  confirmDialog(`Excluir "${t.description}"? Fica registrado na auditoria.`, ()=>{
+    softDeleteTx(id);
+    logAudit('excluiu','transacoes','lancamento', id, `excluiu "${t.description}" (${fmt(t.amount)})`, null, {categoryId:t.categoryId});
+  }, {title:'Excluir lançamento', confirmLabel:'Excluir', danger:true});
+}
+// Cancela uma compra parcelada preservando o histórico já pago (item 10):
+// parcelas cujas faturas já foram pagas nunca são apagadas.
+function removeCardPurchase(purchaseId){
+  const purchase = (DATA.purchases||[]).find(p=>p.id===purchaseId && !p.deletedAt);
+  if(!purchase) return;
+  const insts = nonDeletedTx().filter(t=>t.purchaseId===purchaseId);
+  const paid = insts.filter(isInstallmentPaid);
+  const unpaid = insts.filter(t=>!isInstallmentPaid(t));
+  if(unpaid.length===0){
+    alertDialog('Todas as parcelas dessa compra já foram pagas — não é possível cancelar. O histórico fica preservado na fatura.', {title:'Não é possível cancelar'});
+    return;
+  }
+  const msg = paid.length>0
+    ? `Cancelar as ${unpaid.length} parcela(s) ainda não pagas de "${purchase.description}"? As ${paid.length} já pagas continuam no histórico.`
+    : `Cancelar a compra "${purchase.description}" (${purchase.installmentCount}x)? Isso remove todas as parcelas.`;
+  confirmDialog(msg, ()=>{
+    unpaid.forEach(t=>{ t.deletedAt = nowIso(); });
+    if(paid.length===0) purchase.deletedAt = nowIso();
+    purchase.updated_at = nowIso();
+
+    persist();
+    logAudit('excluiu','cartoes','compra', purchaseId, `cancelou ${paid.length>0?unpaid.length+' parcela(s) de ':''}"${purchase.description}"`, null, {cardId:purchase.cardId, categoryId:purchase.categoryId});
+  }, {title:'Cancelar compra no cartão', confirmLabel:'Cancelar compra', danger:true});
+}
 
 // ---------------- Orçamentos ----------------
 // Orçamento = quanto planejei gastar. Saída = quanto realmente gastei.
@@ -1102,7 +1800,7 @@ function renderBudgetChart(rows){
 }
 
 function renderOrcamentos(mKey){
-  const monthTx = DATA.transactions.filter(t=>t.date.startsWith(mKey));
+  const monthTx = nonDeletedTx().filter(t=>t.date.startsWith(mKey)).filter(isCategoryRelevant);
   const rows = buildBudgetRows(monthTx);
 
   const totalOrcado = rows.reduce((s,r)=>s+r.orcado,0);
@@ -1227,13 +1925,27 @@ function saveBudget(budgetId){
   if(!categoryId){ if(errEl) errEl.textContent='Escolha uma categoria.'; return; }
   if(isNaN(amount) || amount<=0){ if(errEl) errEl.textContent='Informe um valor limite maior que zero.'; return; }
   if(budgetId){
+    const before = DATA.budgets.find(b=>b.id===budgetId);
+    const changes = before ? diffChanges(before, {categoryId, amount}, [
+      {key:'categoryId', label:'Categoria', fmt:v=>categoryName(v)},
+      {key:'amount', label:'Valor limite', fmt:v=>fmt(v)}
+    ]) : [];
     DATA.budgets = DATA.budgets.map(b=> b.id===budgetId ? {...b, categoryId, amount} : b);
+    closeModal(); persist();
+    if(changes.length) logAudit('editou','orcamentos','orcamento', budgetId, `editou o orçamento de ${categoryName(categoryId)}`, changes, {categoryId});
   } else {
-    DATA.budgets.push({id:uid(), categoryId, amount});
+    const newBudget = {id:uid(), categoryId, amount};
+    DATA.budgets.push(newBudget);
+    closeModal(); persist();
+    logAudit('criou','orcamentos','orcamento', newBudget.id, `criou o orçamento de ${categoryName(categoryId)} (${fmt(amount)})`, null, {categoryId});
   }
-  closeModal(); persist();
 }
-function removeBudget(id){ DATA.budgets = DATA.budgets.filter(b=>b.id!==id); persist(); }
+function removeBudget(id){
+  const b = DATA.budgets.find(x=>x.id===id);
+  DATA.budgets = DATA.budgets.filter(x=>x.id!==id);
+  persist();
+  if(b) logAudit('excluiu','orcamentos','orcamento', id, `excluiu o orçamento de ${categoryName(b.categoryId)}`, null, {categoryId:b.categoryId});
+}
 
 // ---------------- Cadastro de categorias ----------------
 // A cor não é escolhida pelo usuário: o sistema atribui automaticamente um
@@ -1262,7 +1974,7 @@ function openCategoryForm(kind, targetSelectId, categoryId){
       <button class="btn secondary" onclick="closeModal()">Cancelar</button>
       <button class="btn" onclick="saveCategory('${k}', ${targetSelectId?`'${targetSelectId}'`:'null'}, ${editing?`'${editing.id}'`:'null'})">Salvar</button>
     </div>
-  `);
+  `, {stack: !!targetSelectId});
 }
 function saveCategory(kind, targetSelectId, categoryId){
   const name = val('cat-name').trim();
@@ -1275,11 +1987,18 @@ function saveCategory(kind, targetSelectId, categoryId){
   let newId = categoryId;
   if(categoryId){
     const status = val('cat-status') || 'ativa';
+    const before = getCategory(categoryId);
+    const changes = before ? diffChanges(before, {name, description, status}, [
+      {key:'name', label:'Nome'}, {key:'description', label:'Descrição'},
+      {key:'status', label:'Status', fmt:v=>v==='ativa'?'Ativa':'Inativa'}
+    ]) : [];
     DATA.categories = DATA.categories.map(c=> c.id===categoryId ? {...c, name, description, status, updated_at:nowIso()} : c);
+    if(changes.length) logAudit('editou','categorias','categoria', categoryId, `editou a categoria "${name}"`, changes, {categoryId});
   } else {
     const created = makeCategory(name, kind, DATA.categories, description);
     DATA.categories.push(created);
     newId = created.id;
+    logAudit('criou','categorias','categoria', newId, `criou a categoria "${name}"`, null, {categoryId:newId});
   }
 
   closeModal();
@@ -1333,26 +2052,29 @@ function openCategoryManager(){
   `);
 }
 function countCategoryUsage(id){
-  const t = DATA.transactions.filter(x=>x.categoryId===id).length;
+  const t = nonDeletedTx().filter(x=>x.categoryId===id).length;
   const b = DATA.budgets.filter(x=>x.categoryId===id).length;
   const i = DATA.installments.filter(x=>x.categoryId===id).length;
   return t + b + i;
 }
 function setCategoryStatus(id, status){
+  const cat = getCategory(id);
   DATA.categories = DATA.categories.map(c=> c.id===id ? {...c, status, updated_at:nowIso()} : c);
   saveData();
   openCategoryManager();
   render();
+  if(cat) logAudit(status==='ativa'?'ativou':'desativou','categorias','categoria', id, `${status==='ativa'?'reativou':'desativou'} a categoria "${cat.name}"`, null, {categoryId:id});
 }
 // Só permite exclusão física quando não há nenhum vínculo. Havendo histórico,
 // o caminho é a desativação (soft delete).
 function deleteCategory(id){
   if(countCategoryUsage(id)>0) return;
-  if(!confirm('Excluir esta categoria? Ela não possui lançamentos vinculados.')) return;
-  DATA.categories = DATA.categories.filter(c=>c.id!==id);
-  saveData();
-  openCategoryManager();
-  render();
+  confirmDialog('Excluir esta categoria? Ela não possui lançamentos vinculados.', ()=>{
+    DATA.categories = DATA.categories.filter(c=>c.id!==id);
+    saveData();
+    openCategoryManager();
+    render();
+  }, {title:'Excluir categoria', confirmLabel:'Excluir', danger:true});
 }
 
 // ---------------- Parcelas ----------------
@@ -1421,82 +2143,546 @@ function addInstallment(){
   if(isNaN(count) || count<=0){ if(errEl) errEl.textContent='O número de parcelas precisa ser pelo menos 1.'; return; }
   const monthlyAmount = total/count;
   const personEl = document.getElementById('inst-person');
-  DATA.installments.push({id:uid(), description:desc, personId: personEl?personEl.value:'p1', totalAmount:total, count, paid:0, monthlyAmount, firstDueDate:val('inst-date'), categoryId:val('inst-category')});
+  const categoryId = val('inst-category');
+  const newInst = {id:uid(), description:desc, personId: personEl?personEl.value:'p1', totalAmount:total, count, paid:0, monthlyAmount, firstDueDate:val('inst-date'), categoryId};
+  DATA.installments.push(newInst);
   closeModal(); persist();
+  logAudit('criou','parcelas','parcelamento', newInst.id, `criou o parcelamento "${desc}" (${count}x de ${fmt(monthlyAmount)})`, null, {categoryId});
 }
-function markInstallmentPaid(id){ DATA.installments = DATA.installments.map(i=>i.id===id?{...i, paid:Math.min(i.paid+1,i.count)}:i); persist(); }
-function undoInstallmentPaid(id){ DATA.installments = DATA.installments.map(i=>i.id===id?{...i, paid:Math.max(i.paid-1,0)}:i); persist(); }
-function removeInstallment(id){ DATA.installments = DATA.installments.filter(i=>i.id!==id); persist(); }
+function markInstallmentPaid(id){
+  const inst = DATA.installments.find(i=>i.id===id);
+  if(!inst) return;
+  DATA.installments = DATA.installments.map(i=>i.id===id?{...i, paid:Math.min(i.paid+1,i.count)}:i);
+  persist();
+  logAudit('pagou','parcelas','parcelamento', id, `marcou uma parcela de "${inst.description}" como paga`, null, {categoryId:inst.categoryId});
+}
+function undoInstallmentPaid(id){
+  const inst = DATA.installments.find(i=>i.id===id);
+  if(!inst) return;
+  DATA.installments = DATA.installments.map(i=>i.id===id?{...i, paid:Math.max(i.paid-1,0)}:i);
+  persist();
+  logAudit('estornou','parcelas','parcelamento', id, `desfez o pagamento de uma parcela de "${inst.description}"`, null, {categoryId:inst.categoryId});
+}
+function removeInstallment(id){
+  const inst = DATA.installments.find(i=>i.id===id);
+  if(!inst) return;
+  confirmDialog(`Cancelar o parcelamento "${inst.description}"?`, ()=>{
+    DATA.installments = DATA.installments.filter(i=>i.id!==id);
+    persist();
+    logAudit('excluiu','parcelas','parcelamento', id, `cancelou o parcelamento "${inst.description}"`, null, {categoryId:inst.categoryId});
+  }, {title:'Cancelar parcelamento', confirmLabel:'Cancelar parcelamento', danger:true});
+}
 
 // ---------------- Cartão ----------------
 function renderCartao(mKey){
   const people = getPeople();
+  const cards = DATA.cards||[];
   return `
     ${renderTipCard('cartao')}
     <div class="section-head">
-      <div class="sub">Faturas do mês selecionado</div>
-      <button class="btn" onclick="openCardForm()">+ Novo cartão</button>
+      <div class="sub">Um painel por cartão — a fatura é sempre calculada a partir dos lançamentos, nunca digitada.</div>
+      <div style="display:flex; gap:8px;">
+        <button class="btn secondary" onclick="openAccountsManager()">${icon('wallet',15)} Contas</button>
+        <button class="btn" onclick="openCardForm()">+ Novo cartão</button>
+      </div>
     </div>
-    <div class="row-list">
-      ${DATA.cards.length===0?'<div class="empty"><span class="empty-title">Nenhum cartão cadastrado</span>Cadastre o cartão pra acompanhar a fatura mês a mês, sem surpresa no fechamento.</div>':
-        DATA.cards.map(card=>{
-          const key = `${card.id}-${mKey}`;
-          const bill = DATA.cardBills[key] || {amount:0, paid:false};
-          return `
-          <div class="card" style="padding:16px;">
-            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
-              <div>
-                <div class="item-desc">${esc(card.name)}</div>
-                <div class="item-meta">${people.length>1?esc(personName(card.personId))+' · ':''}fecha dia ${card.closingDay} · vence dia ${card.dueDay}</div>
-              </div>
-              <div style="display:flex; gap:8px; align-items:center;">
-                <input type="number" step="0.01" placeholder="Valor da fatura" value="${bill.amount||''}" style="width:130px;" onblur="setBillAmount('${card.id}','${mKey}',this.value)">
-                <button class="btn small ${bill.paid?'secondary':''}" onclick="toggleBillPaid('${card.id}','${mKey}')">${bill.paid?'Paga ✓':'Marcar paga'}</button>
-                <button class="btn danger" onclick="removeCard('${card.id}')">Excluir</button>
-              </div>
-            </div>
-          </div>`;
-        }).join('')}
+    <div class="grid grid-2">
+      ${cards.length===0?'<div class="empty"><span class="empty-title">Nenhum cartão cadastrado</span>Cadastre um cartão pra começar a lançar compras no crédito com fatura automática.</div>':
+        cards.map(card=>renderCardPanelTile(card)).join('')}
     </div>
   `;
 }
-function openCardForm(){
+function renderCardPanelTile(card){
   const people = getPeople();
-  openModal(`
-    <h3>Novo cartão</h3>
-    <div class="form-grid full"><div class="field"><label>Nome do cartão</label><input id="card-name" placeholder="Ex: Nubank, Inter..."></div></div>
-    <div class="form-grid cols-3">
-      ${people.length>1?`<div class="field"><label>Responsável</label><select id="card-person">${people.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select></div>`:`<input type="hidden" id="card-person" value="${people[0]?.id||'p1'}">`}
-      <div class="field"><label>Dia fechamento</label><input type="number" min="1" max="31" id="card-closing" value="20"></div>
-      <div class="field"><label>Dia vencimento</label><input type="number" min="1" max="31" id="card-due" value="27"></div>
+  const used = cardUsedLimit(card.id);
+  const avail = cardAvailableLimit(card.id);
+  const pct = card.limit>0 ? Math.min(100, Math.round((used/card.limit)*100)) : 0;
+  const {currentKey, nextKey} = currentAndNextInvoice(card);
+  const curStatus = invoiceStatus(card, currentKey);
+  const curTotal = invoiceTotal(card.id, currentKey);
+  const nextTotal = invoiceTotal(card.id, nextKey);
+  const inactive = card.status!=='ativa';
+  return `
+    <div class="card card-panel ${inactive?'card-inactive':''}" style="border-left:4px solid ${card.color||'#9C8F7A'};">
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px;">
+        <div>
+          <div class="item-desc">${esc(card.name)} ${inactive?'<span class="over-tag">inativo</span>':''}</div>
+          <div class="item-meta">${people.length>1?esc(personName(card.personId))+' · ':''}fecha dia ${card.closingDay} · vence dia ${card.dueDay}</div>
+        </div>
+        <button class="icon-btn" onclick="openCardForm('${card.id}')" aria-label="Editar cartão">${icon('edit',15)}</button>
+      </div>
+      <div style="margin-top:14px;">
+        <div class="progress-track"><div class="progress-fill" style="width:${pct}%; background:${pct>=90?'var(--garnet)':(pct>=70?'var(--brass)':'var(--verdigris)')};"></div></div>
+        <div class="item-meta" style="margin-top:5px; display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap;">
+          <span>Limite ${fmt(card.limit)}</span>
+          <span>Usado ${fmt(used)}</span>
+          <span>Disponível ${fmt(avail)}</span>
+        </div>
+      </div>
+      <div class="grid" style="margin-top:14px; gap:8px;">
+        <button class="btn secondary small" style="justify-content:space-between; display:flex;" onclick="openInvoiceDetail('${card.id}','${currentKey}')">
+          <span>Fatura atual · ${monthLabel(monthKeyToDate(currentKey))}</span>
+          <span><strong>${fmt(curTotal)}</strong> · ${INVOICE_STATUS_LABEL[curStatus]}</span>
+        </button>
+        <button class="btn secondary small" style="justify-content:space-between; display:flex;" onclick="openInvoiceDetail('${card.id}','${nextKey}')">
+          <span>Próxima fatura · ${monthLabel(monthKeyToDate(nextKey))}</span>
+          <span>${fmt(nextTotal)}</span>
+        </button>
+      </div>
     </div>
+  `;
+}
+function openCardForm(editId){
+  const people = getPeople();
+  const card = editId ? getCard(editId) : null;
+  openModal(`
+    <h3>${card?'Editar cartão':'Novo cartão'}</h3>
+    <input type="hidden" id="card-edit-id" value="${card?card.id:''}">
+    <div class="form-grid full"><div class="field"><label>Nome do cartão</label><input id="card-name" value="${card?esc(card.name):''}" placeholder="Ex: Nubank, Inter..."></div></div>
+    <div class="form-grid cols-3">
+      ${people.length>1?`<div class="field"><label>Responsável</label><select id="card-person">${people.map(p=>`<option value="${p.id}" ${card&&card.personId===p.id?'selected':''}>${esc(p.name)}</option>`).join('')}</select></div>`:`<input type="hidden" id="card-person" value="${people[0]?.id||'p1'}">`}
+      <div class="field"><label>Dia fechamento</label><input type="number" min="1" max="31" id="card-closing" value="${card?card.closingDay:20}"></div>
+      <div class="field"><label>Dia vencimento</label><input type="number" min="1" max="31" id="card-due" value="${card?card.dueDay:27}"></div>
+    </div>
+    <div class="form-grid full"><div class="field"><label>Limite (R$)</label><input type="number" step="0.01" id="card-limit" value="${card?card.limit:''}" placeholder="Ex: 2500"></div></div>
+    ${card?`<div class="form-grid full"><div class="field"><label>Status</label>
+      <select id="card-status">
+        <option value="ativa" ${card.status==='ativa'?'selected':''}>Ativo</option>
+        <option value="inativa" ${card.status==='inativa'?'selected':''}>Inativo</option>
+      </select>
+    </div></div>`:''}
+    <div class="error-msg" id="card-error"></div>
     <div class="modal-actions">
+      ${card?`<button class="btn danger" onclick="removeCard('${card.id}')">Excluir</button>`:''}
       <button class="btn secondary" onclick="closeModal()">Cancelar</button>
-      <button class="btn" onclick="addCard()">Salvar</button>
+      <button class="btn" onclick="saveCard()">Salvar</button>
     </div>
   `);
 }
-function addCard(){
-  const name = val('card-name');
-  if(!name) return;
+function saveCard(){
+  const errEl = document.getElementById('card-error');
+  const name = val('card-name').trim();
+  const closingDay = Number(val('card-closing'));
+  const dueDay = Number(val('card-due'));
+  const limit = Number(val('card-limit'))||0;
+  if(!name){ if(errEl) errEl.textContent='Informe o nome do cartão.'; return; }
+  if(!closingDay || closingDay<1 || closingDay>31 || !dueDay || dueDay<1 || dueDay>31){
+    if(errEl) errEl.textContent='Informe dias de fechamento e vencimento válidos (1 a 31).'; return;
+  }
   const personEl = document.getElementById('card-person');
-  DATA.cards.push({id:uid(), name, personId:personEl?personEl.value:'p1', closingDay:Number(val('card-closing')), dueDay:Number(val('card-due'))});
-  closeModal(); persist();
-}
-function removeCard(id){ DATA.cards = DATA.cards.filter(c=>c.id!==id); persist(); }
-function setBillAmount(cardId, mKey, value){
-  if(value===''||value==null) return;
-  const num = Number(value);
-  if(isNaN(num) || num<0) return;
-  const key = `${cardId}-${mKey}`;
-  DATA.cardBills[key] = {...(DATA.cardBills[key]||{}), amount:num, paid:(DATA.cardBills[key]||{}).paid||false};
+  const personId = personEl ? personEl.value : (getPeople()[0]?.id||'p1');
+  const editId = val('card-edit-id');
+
+  if(editId){
+    const card = getCard(editId);
+    if(!card){ closeModal(); return; }
+    const before = {name:card.name, closingDay:card.closingDay, dueDay:card.dueDay, limit:card.limit, status:card.status};
+    const statusEl = document.getElementById('card-status');
+    const after = {name, closingDay, dueDay, limit, status: statusEl?statusEl.value:card.status};
+    const changes = diffChanges(before, after, [
+      {key:'name', label:'Nome'},
+      {key:'closingDay', label:'Dia de fechamento'},
+      {key:'dueDay', label:'Dia de vencimento'},
+      {key:'limit', label:'Limite', fmt:v=>fmt(v)},
+      {key:'status', label:'Status', fmt:v=>v==='ativa'?'Ativo':'Inativo'}
+    ]);
+    Object.assign(card, after, {personId, updated_at:nowIso()});
+    closeModal();
+    persist();
+    if(changes.length) logAudit('editou','cartoes','cartao',card.id, `editou o cartão "${name}"`, changes, {cardId:card.id});
+    return;
+  }
+
+  const newCard = {
+    id:uid(), name, personId, closingDay, dueDay, limit, status:'ativa',
+    color: pickCategoryColor(DATA.cards), created_at:nowIso(), updated_at:nowIso()
+  };
+  DATA.cards.push(newCard);
+  closeModal();
   persist();
+  logAudit('criou','cartoes','cartao', newCard.id, `cadastrou o cartão "${name}"`, null, {cardId:newCard.id});
 }
-function toggleBillPaid(cardId, mKey){
-  const key = `${cardId}-${mKey}`;
-  const cur = DATA.cardBills[key] || {amount:0, paid:false};
-  DATA.cardBills[key] = {...cur, paid:!cur.paid};
+function removeCard(id){
+  const card = getCard(id);
+  if(!card) return;
+  const hasUsage = (DATA.purchases||[]).some(p=>p.cardId===id && !p.deletedAt);
+  if(hasUsage){
+    confirmDialog(`"${card.name}" já tem compras lançadas. Em vez de excluir, o cartão vai ser marcado como inativo (o histórico continua intacto). Continuar?`, ()=>{
+      card.status = 'inativa';
+      card.updated_at = nowIso();
+      closeModal();
+      persist();
+      logAudit('desativou','cartoes','cartao', id, `desativou o cartão "${card.name}"`, null, {cardId:id});
+    }, {title:'Desativar cartão', confirmLabel:'Desativar'});
+    return;
+  }
+  confirmDialog(`Excluir o cartão "${card.name}"?`, ()=>{
+    DATA.cards = DATA.cards.filter(c=>c.id!==id);
+    closeModal();
+    persist();
+    logAudit('excluiu','cartoes','cartao', id, `excluiu o cartão "${card.name}"`, null, {cardId:id});
+  }, {title:'Excluir cartão', confirmLabel:'Excluir', danger:true});
+}
+
+// ---------------- Detalhe e pagamento de fatura ----------------
+function openInvoiceDetail(cardId, mKey){
+  const card = getCard(cardId);
+  if(!card) return;
+  const people = getPeople();
+  const items = cardTransactionsForMonth(cardId, mKey).sort((a,b)=>a.date.localeCompare(b.date));
+  const total = items.reduce((s,t)=>s+Number(t.amount),0);
+  const status = invoiceStatus(card, mKey);
+  const rec = invoiceRecord(cardId, mKey);
+  const early = !rec.paid && isEarlyInvoicePayment(card, mKey);
+
+  openModal(`
+    <h3>Fatura ${esc(card.name)} · ${monthLabel(monthKeyToDate(mKey))}</h3>
+    <div class="sub" style="margin-bottom:4px;">Fecha dia ${card.closingDay} · vence dia ${card.dueDay} · <span class="invoice-badge invoice-${status}">${INVOICE_STATUS_LABEL[status]}</span></div>
+    <div class="stat-hero" style="font-size:26px; margin:10px 0 16px;">${fmt(total)}</div>
+    <div class="row-list list-grouped" style="max-height:320px; overflow-y:auto;">
+      ${items.length===0?'<div class="empty"><span class="empty-title">Nenhum lançamento nesta fatura</span></div>':
+        items.map(t=>`
+        <div class="item-row">
+          <div class="item-left">
+            <div>
+              <div class="item-desc">${esc(t.description)} ${t.installmentCount>1?`<span class="over-tag" style="background:var(--brass-tint); color:var(--brass-deep);">${t.installmentNumber}/${t.installmentCount}</span>`:''}</div>
+              <div class="item-meta"><span class="cat-chip"><span class="cat-dot" style="background:${categoryColor(t.categoryId)}"></span>${esc(categoryName(t.categoryId))}</span> ${people.length>1?'· '+esc(personName(t.personId)):''} · ${new Date(t.date+'T00:00:00').toLocaleDateString('pt-BR')}</div>
+            </div>
+          </div>
+          <div class="item-amount" style="color:var(--garnet)">${fmt(t.amount)}</div>
+        </div>`).join('')}
+    </div>
+    <div class="modal-actions">
+      <button class="btn secondary" onclick="closeModal()">Fechar</button>
+      ${rec.paid
+        ? `<button class="btn secondary" onclick="undoInvoicePayment('${cardId}','${mKey}')">Desmarcar como paga</button>`
+        : `<button class="btn" onclick="openPayInvoiceModal('${cardId}','${mKey}')" ${total<=0?'disabled':''}>${early?'Adiantar fatura':'Marcar como paga'}</button>`}
+    </div>
+  `);
+}
+function openPayInvoiceModal(cardId, mKey){
+  const card = getCard(cardId);
+  const total = invoiceTotal(cardId, mKey);
+  const accounts = activeAccounts();
+  const early = isEarlyInvoicePayment(card, mKey);
+  openModal(`
+    <h3>${early?'Adiantar':'Pagar'} fatura ${esc(card.name)}</h3>
+    <div class="sub" style="margin-bottom:14px;">${early
+      ? `Isso registra a saída real de ${fmt(total)} hoje, antes do vencimento (${invoiceDueDate(card,mKey).toLocaleDateString('pt-BR')}) — o gasto passa a contar no mês em que você está adiantando, não no mês original da fatura.`
+      : `Isso registra a saída real de ${fmt(total)} na conta escolhida — é o único momento em que essa compra afeta seu saldo bancário.`}</div>
+    <div class="form-grid full">
+      <div class="field"><label>Conta de origem</label>
+        <select id="pay-account">
+          ${accounts.length===0?'<option value="">Nenhuma conta cadastrada</option>':accounts.map(a=>`<option value="${a.id}">${esc(a.name)}</option>`).join('')}
+        </select>
+      </div>
+    </div>
+    <div class="error-msg" id="pay-error"></div>
+    <div class="modal-actions">
+      <button class="btn secondary" onclick="openInvoiceDetail('${cardId}','${mKey}')">Voltar</button>
+      <button class="btn" onclick="confirmPayInvoice('${cardId}','${mKey}')">${early?'Confirmar adiantamento':'Confirmar pagamento'}</button>
+    </div>
+  `);
+}
+function confirmPayInvoice(cardId, mKey){
+  const errEl = document.getElementById('pay-error');
+  const accountId = val('pay-account');
+  if(!accountId){ if(errEl) errEl.textContent='Escolha a conta de onde o valor vai sair.'; return; }
+  const card = getCard(cardId);
+  const total = invoiceTotal(cardId, mKey);
+  if(!card || total<=0) return;
+  const early = isEarlyInvoicePayment(card, mKey);
+  const todayStr = dateStr(new Date());
+
+  const paymentTx = {
+    id:uid(), type:'saida', personId:getActivePersonId()||card.personId, categoryId:null,
+    description: early
+      ? `Adiantamento da fatura ${card.name} (venceria em ${monthLabel(monthKeyToDate(mKey))})`
+      : `Pagamento fatura ${card.name} · ${monthLabel(monthKeyToDate(mKey))}`,
+    amount: total, date: todayStr,
+    paymentMethod:'transferencia', cardId, purchaseId:null,
+    installmentNumber:null, installmentCount:null, invoiceMonthKey:mKey,
+    kind:'pagamento_fatura', accountId, deletedAt:null
+  };
+  DATA.transactions.push(paymentTx);
+  // paidTxIds fixa QUAIS parcelas este pagamento cobriu — uma compra lançada
+  // depois (mesmo caindo no mesmo mês de fatura) não deve ser considerada
+  // paga por este pagamento (ver isInstallmentPaid).
+  const coveredTxs = cardTransactionsForMonth(cardId, mKey);
+  const coveredIds = coveredTxs.map(t=>t.id);
+  // Adiantamento: o gasto passa a "valer" no mês em que ele foi de fato
+  // adiantado, não no mês original da fatura — então as parcelas cobertas
+  // por este pagamento mudam de data pra hoje, e com isso saem do mapa de
+  // gastos/orçamento do mês original e entram no do mês do adiantamento.
+  // Pagamento no prazo normal não mexe nisso (mantém a data da fatura).
+  if(early) coveredTxs.forEach(t=>{ t.date = todayStr; });
+  DATA.invoices[`${cardId}-${mKey}`] = {paid:true, paidAt:nowIso(), accountId, paymentTxId:paymentTx.id, paidTxIds:coveredIds};
+
+  // O pagamento sempre entra na Entradas & Saídas do dia real em que foi
+  // feito (paymentTx.date), que pode ser um mês diferente do mês-fatura
+  // (pagar adiantado, por exemplo). Leva o seletor de mês junto pra esse
+  // mesmo dia — senão o usuário fica sem ver o próprio pagamento até
+  // navegar manualmente pra descobrir em qual mês ele caiu.
+  CURRENT_MONTH = new Date();
+  closeModal();
   persist();
+  logAudit('pagou','cartoes','fatura', `${cardId}-${mKey}`,
+    early
+      ? `adiantou a fatura de ${esc(card.name)} (venceria em ${monthLabel(monthKeyToDate(mKey))}) — ${fmt(total)} via ${accountName(accountId)}`
+      : `marcou a fatura de ${esc(card.name)} (${monthLabel(monthKeyToDate(mKey))}) como paga — ${fmt(total)} via ${accountName(accountId)}`,
+    null, {cardId, accountId});
+}
+function undoInvoicePayment(cardId, mKey){
+  const card = getCard(cardId);
+  const key = `${cardId}-${mKey}`;
+  const rec = invoiceRecord(cardId, mKey);
+  if(!rec.paid) return;
+  confirmDialog(`Desmarcar a fatura de ${card?card.name:''} como paga? Isso desfaz a saída bancária registrada e o valor volta a comprometer o limite do cartão.`, ()=>{
+    if(rec.paymentTxId) softDeleteTx(rec.paymentTxId, {silent:true});
+    // Se o pagamento tinha sido um adiantamento, as parcelas cobertas tiveram a
+    // data movida pro dia do adiantamento (ver confirmPayInvoice) — desfazer
+    // o pagamento devolve cada uma pra data original da fatura (recalculada,
+    // nunca guardada à parte, pra não duplicar fonte de verdade).
+    if(card && Array.isArray(rec.paidTxIds)){
+      const dueStr = dateStr(invoiceDueDate(card, mKey));
+      rec.paidTxIds.forEach(id=>{
+        const t = (DATA.transactions||[]).find(x=>x.id===id);
+        if(t) t.date = dueStr;
+      });
+    }
+    DATA.invoices[key] = {paid:false};
+    closeModal();
+    persist();
+    logAudit('estornou','cartoes','fatura', key, `desmarcou a fatura de ${card?card.name:''} (${monthLabel(monthKeyToDate(mKey))}) como paga`, null, {cardId, accountId:rec.accountId||null});
+  }, {title:'Desmarcar fatura como paga', confirmLabel:'Desmarcar', danger:true});
+}
+
+// ---------------- Contas bancárias ----------------
+function openAccountsManager(){
+  const accounts = DATA.accounts||[];
+  const people = getPeople();
+  openModal(`
+    <h3>Contas</h3>
+    <div class="sub" style="margin-bottom:12px;">De onde o dinheiro sai quando você paga uma fatura ou registra uma saída em dinheiro/PIX/débito.</div>
+    <div class="row-list list-grouped" style="max-height:280px; overflow-y:auto;">
+      ${accounts.length===0?'<div class="empty"><span class="empty-title">Nenhuma conta cadastrada</span></div>':
+        accounts.map(a=>`
+        <div class="item-row">
+          <div class="item-left">
+            <div>
+              <div class="item-desc">${esc(a.name)} ${a.status!=='ativa'?'<span class="over-tag">inativa</span>':''}</div>
+              <div class="item-meta">${accountKindLabel(a.kind)}${people.length>1?' · '+esc(personName(a.personId)):''}</div>
+            </div>
+          </div>
+          <button class="icon-btn" onclick="openAccountForm('${a.id}')" aria-label="Editar">${icon('edit',15)}</button>
+        </div>`).join('')}
+    </div>
+    <div class="modal-actions">
+      <button class="btn secondary" onclick="closeModal()">Fechar</button>
+      <button class="btn" onclick="openAccountForm()">+ Nova conta</button>
+    </div>
+  `);
+}
+function openAccountForm(editId){
+  const account = editId ? getAccount(editId) : null;
+  const people = getPeople();
+  openModal(`
+    <h3>${account?'Editar conta':'Nova conta'}</h3>
+    <input type="hidden" id="acc-edit-id" value="${account?account.id:''}">
+    <div class="form-grid full"><div class="field"><label>Nome da conta</label><input id="acc-name" value="${account?esc(account.name):''}" placeholder="Ex: Conta corrente, Sicoob, Nubank..."></div></div>
+    <div class="form-grid">
+      <div class="field"><label>Tipo</label>
+        <select id="acc-kind">${ACCOUNT_KINDS.map(k=>`<option value="${k.id}" ${account&&account.kind===k.id?'selected':''}>${k.label}</option>`).join('')}</select>
+      </div>
+      ${people.length>1?`<div class="field"><label>Responsável</label><select id="acc-person">${people.map(p=>`<option value="${p.id}" ${account&&account.personId===p.id?'selected':''}>${esc(p.name)}</option>`).join('')}</select></div>`:`<input type="hidden" id="acc-person" value="${people[0]?.id||'p1'}">`}
+    </div>
+    ${account?`<div class="form-grid full"><div class="field"><label>Status</label>
+      <select id="acc-status">
+        <option value="ativa" ${account.status==='ativa'?'selected':''}>Ativa</option>
+        <option value="inativa" ${account.status==='inativa'?'selected':''}>Inativa</option>
+      </select>
+    </div></div>`:''}
+    <div class="error-msg" id="acc-error"></div>
+    <div class="modal-actions">
+      ${account?`<button class="btn danger" onclick="removeAccount('${account.id}')">Excluir</button>`:''}
+      <button class="btn secondary" onclick="openAccountsManager()">Voltar</button>
+      <button class="btn" onclick="saveAccount()">Salvar</button>
+    </div>
+  `);
+}
+function saveAccount(){
+  const errEl = document.getElementById('acc-error');
+  const name = val('acc-name').trim();
+  if(!name){ if(errEl) errEl.textContent='Informe o nome da conta.'; return; }
+  const kind = val('acc-kind');
+  const personEl = document.getElementById('acc-person');
+  const personId = personEl ? personEl.value : (getPeople()[0]?.id||'p1');
+  const editId = val('acc-edit-id');
+
+  if(editId){
+    const account = getAccount(editId);
+    if(!account){ openAccountsManager(); return; }
+    const statusEl = document.getElementById('acc-status');
+    const before = {name:account.name, kind:account.kind, status:account.status};
+    const after = {name, kind, status: statusEl?statusEl.value:account.status};
+    const changes = diffChanges(before, after, [
+      {key:'name', label:'Nome'},
+      {key:'kind', label:'Tipo', fmt:v=>accountKindLabel(v)},
+      {key:'status', label:'Status', fmt:v=>v==='ativa'?'Ativa':'Inativa'}
+    ]);
+    Object.assign(account, after, {personId, updated_at:nowIso()});
+    saveData();
+    openAccountsManager();
+    if(changes.length) logAudit('editou','contas','conta', account.id, `editou a conta "${name}"`, changes, {accountId:account.id});
+    return;
+  }
+
+  const newAccount = {
+    id:uid(), name, kind, personId, status:'ativa',
+    color: pickCategoryColor(DATA.accounts), created_at:nowIso(), updated_at:nowIso()
+  };
+  DATA.accounts.push(newAccount);
+  saveData();
+  openAccountsManager();
+  logAudit('criou','contas','conta', newAccount.id, `cadastrou a conta "${name}"`, null, {accountId:newAccount.id});
+}
+function removeAccount(id){
+  const account = getAccount(id);
+  if(!account) return;
+  const usage = accountUsage(id);
+  if(usage>0){
+    confirmDialog(`"${account.name}" já tem movimentações vinculadas. Em vez de excluir, ela vai ser marcada como inativa. Continuar?`, ()=>{
+      account.status = 'inativa';
+      account.updated_at = nowIso();
+      saveData();
+      openAccountsManager();
+      logAudit('desativou','contas','conta', id, `desativou a conta "${account.name}"`, null, {accountId:id});
+    }, {title:'Desativar conta', confirmLabel:'Desativar'});
+    return;
+  }
+  confirmDialog(`Excluir a conta "${account.name}"?`, ()=>{
+    DATA.accounts = DATA.accounts.filter(a=>a.id!==id);
+    saveData();
+    openAccountsManager();
+    logAudit('excluiu','contas','conta', id, `excluiu a conta "${account.name}"`, null, {accountId:id});
+  }, {title:'Excluir conta', confirmLabel:'Excluir', danger:true});
+}
+
+// ---------------- Auditoria ----------------
+// Tela de HISTÓRICO DE AÇÕES — diferente da tela de Entradas & Saídas, que
+// mostra o estado atual. Aqui o objetivo é "quem fez o quê e quando",
+// puxado da tabela append-only do servidor (nunca do blob local).
+const AUDIT_ACTION_LABELS = {criou:'Criou', editou:'Editou', excluiu:'Excluiu', pagou:'Pagou', estornou:'Estornou', ativou:'Ativou', desativou:'Desativou'};
+const AUDIT_MODULE_LABELS = {transacoes:'Lançamentos', cartoes:'Cartões', contas:'Contas', orcamentos:'Orçamentos', categorias:'Categorias', parcelas:'Parcelas', caixinhas:'Caixinhas', lembretes:'Lembretes'};
+let AUDIT_EVENTS = [];
+let AUDIT_FILTERS = {personId:'all', action:'all', module:'all', period:'mes', customFrom:'', customTo:''};
+
+function auditPeriodRange(period, customFrom, customTo){
+  const now = new Date();
+  const startOfDay = d => `${dateStr(d)} 00:00:00`;
+  const endOfDay = d => `${dateStr(d)} 23:59:59`;
+  if(period==='hoje') return {from:startOfDay(now), to:endOfDay(now)};
+  if(period==='7dias'){ const d=new Date(now); d.setDate(d.getDate()-6); return {from:startOfDay(d), to:endOfDay(now)}; }
+  if(period==='mes'){ const d=new Date(now.getFullYear(), now.getMonth(), 1); return {from:startOfDay(d), to:endOfDay(now)}; }
+  if(period==='mes-anterior'){
+    const start = new Date(now.getFullYear(), now.getMonth()-1, 1);
+    const end = new Date(now.getFullYear(), now.getMonth(), 0);
+    return {from:startOfDay(start), to:endOfDay(end)};
+  }
+  if(period==='custom'){
+    if(!customFrom || !customTo) return {from:null, to:null};
+    return {from:`${customFrom} 00:00:00`, to:`${customTo} 23:59:59`};
+  }
+  return {from:null, to:null};
+}
+async function loadAndRenderAudit(){
+  const {from, to} = auditPeriodRange(AUDIT_FILTERS.period, AUDIT_FILTERS.customFrom, AUDIT_FILTERS.customTo);
+  const params = new URLSearchParams();
+  if(AUDIT_FILTERS.personId!=='all') params.set('personId', AUDIT_FILTERS.personId);
+  if(AUDIT_FILTERS.action!=='all') params.set('action', AUDIT_FILTERS.action);
+  if(AUDIT_FILTERS.module!=='all') params.set('module', AUDIT_FILTERS.module);
+  if(from) params.set('from', from);
+  if(to) params.set('to', to);
+  params.set('limit','150');
+  try{
+    const res = await api('/audit?'+params.toString());
+    AUDIT_EVENTS = res.events||[];
+  }catch(e){
+    AUDIT_EVENTS = [];
+  }
+  if(TAB==='auditoria'){
+    const content = document.getElementById('tab-content');
+    if(content) content.innerHTML = renderAuditoria();
+  }
+}
+function setAuditFilter(key, value){
+  AUDIT_FILTERS[key] = value;
+  if(key==='period' && value!=='custom'){ AUDIT_FILTERS.customFrom=''; AUDIT_FILTERS.customTo=''; }
+  const content = document.getElementById('tab-content');
+  if(content) content.innerHTML = '<div class="empty">Carregando...</div>';
+  loadAndRenderAudit();
+}
+function setAuditCustomRange(){
+  AUDIT_FILTERS.customFrom = val('audit-from');
+  AUDIT_FILTERS.customTo = val('audit-to');
+  if(AUDIT_FILTERS.customFrom && AUDIT_FILTERS.customTo) loadAndRenderAudit();
+}
+function renderAuditoria(){
+  const people = getPeople();
+  const f = AUDIT_FILTERS;
+  return `
+    <div class="sub" style="margin-bottom:14px;">Histórico de quem fez o quê no Cofre. Diferente de Entradas &amp; Saídas (que mostra o estado atual), aqui é o rastro — inclusive do que já foi excluído.</div>
+    <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:16px;">
+      ${people.length>1?`
+      <select onchange="setAuditFilter('personId', this.value)">
+        <option value="all" ${f.personId==='all'?'selected':''}>Pessoa: Todas</option>
+        ${people.map(p=>`<option value="${p.id}" ${f.personId===p.id?'selected':''}>${esc(p.name)}</option>`).join('')}
+      </select>`:''}
+      <select onchange="setAuditFilter('period', this.value)">
+        <option value="hoje" ${f.period==='hoje'?'selected':''}>Hoje</option>
+        <option value="7dias" ${f.period==='7dias'?'selected':''}>Últimos 7 dias</option>
+        <option value="mes" ${f.period==='mes'?'selected':''}>Este mês</option>
+        <option value="mes-anterior" ${f.period==='mes-anterior'?'selected':''}>Mês anterior</option>
+        <option value="custom" ${f.period==='custom'?'selected':''}>Personalizado</option>
+      </select>
+      <select onchange="setAuditFilter('module', this.value)">
+        <option value="all" ${f.module==='all'?'selected':''}>Módulo: Todos</option>
+        ${Object.entries(AUDIT_MODULE_LABELS).map(([k,l])=>`<option value="${k}" ${f.module===k?'selected':''}>${l}</option>`).join('')}
+      </select>
+      <select onchange="setAuditFilter('action', this.value)">
+        <option value="all" ${f.action==='all'?'selected':''}>Ação: Todas</option>
+        ${Object.entries(AUDIT_ACTION_LABELS).map(([k,l])=>`<option value="${k}" ${f.action===k?'selected':''}>${l}</option>`).join('')}
+      </select>
+    </div>
+    ${f.period==='custom'?`
+    <div class="form-grid" style="margin-bottom:16px; max-width:360px;">
+      <div class="field"><label>De</label><input type="date" id="audit-from" value="${f.customFrom}" onchange="setAuditCustomRange()"></div>
+      <div class="field"><label>Até</label><input type="date" id="audit-to" value="${f.customTo}" onchange="setAuditCustomRange()"></div>
+    </div>`:''}
+    <div class="row-list list-grouped">
+      ${AUDIT_EVENTS.length===0 ? '<div class="empty"><span class="empty-title">Nada por aqui neste período</span>Ajuste os filtros ou tente um intervalo maior.</div>' :
+        AUDIT_EVENTS.map(ev=>renderAuditEvent(ev)).join('')}
+    </div>
+  `;
+}
+function renderAuditEvent(ev){
+  const d = new Date(String(ev.createdAt).replace(' ','T')+'Z');
+  const when = isNaN(d.getTime()) ? ev.createdAt : d.toLocaleString('pt-BR', {day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit'});
+  return `
+    <div class="item-row" style="align-items:flex-start;">
+      <div class="item-left" style="align-items:flex-start;">
+        <span class="item-tag audit-tag-${ev.action}">${AUDIT_ACTION_LABELS[ev.action]||ev.action}</span>
+        <div>
+          <div class="item-desc"><strong>${esc(ev.actorPersonName)}</strong> ${esc(ev.description)}</div>
+          <div class="item-meta">${AUDIT_MODULE_LABELS[ev.module]||ev.module} · ${when}</div>
+          ${ev.changes && ev.changes.length ? `
+          <div class="audit-diff">
+            ${ev.changes.map(c=>`<span class="audit-diff-chip">${esc(c.field)}: ${esc(c.from)} → ${esc(c.to)}</span>`).join('')}
+          </div>` : ''}
+        </div>
+      </div>
+    </div>
+  `;
 }
 
 // ---------------- Caixinhas ----------------
@@ -1574,7 +2760,7 @@ function removeJar(id){ DATA.caixinhas = DATA.caixinhas.filter(c=>c.id!==id); pe
 
 // ---------------- Dízimo ----------------
 function renderDizimo(mKey){
-  const monthTx = DATA.transactions.filter(t=>t.date.startsWith(mKey) && t.type==='entrada');
+  const monthTx = nonDeletedTx().filter(t=>t.date.startsWith(mKey) && t.type==='entrada');
   const people = getPeople();
   return `
     ${renderTipCard('dizimo')}

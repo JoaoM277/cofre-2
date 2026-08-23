@@ -23,10 +23,13 @@ const authLimiter = rateLimit({
 function defaultData() {
   return {
     settings: null,
+    categories: [],
     transactions: [],
     installments: [],
     cards: [],
-    cardBills: {},
+    accounts: [],
+    purchases: [],
+    invoices: {},
     caixinhas: [],
     titheStatus: {},
     reminders: [],

@@ -37,7 +37,10 @@ router.post('/clients', requireXhrHeader, async (req, res) => {
 
   db.prepare('INSERT INTO user_data (user_id, data_json) VALUES (?, ?)').run(
     info.lastInsertRowid,
-    JSON.stringify({ settings: null, transactions: [], installments: [], cards: [], cardBills: {}, caixinhas: [], titheStatus: {}, reminders: [], budgets: [] })
+    JSON.stringify({
+      settings: null, categories: [], transactions: [], installments: [], cards: [],
+      accounts: [], purchases: [], invoices: {}, caixinhas: [], titheStatus: {}, reminders: [], budgets: []
+    })
   );
 
   res.status(201).json({ client: { id: info.lastInsertRowid, email, name, role: 'client' } });

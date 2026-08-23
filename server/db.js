@@ -37,6 +37,41 @@ db.exec(`
     data_json TEXT NOT NULL,
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
+
+  -- ---------------------------------------------------------------------
+  -- Auditoria — deliberadamente FORA do blob de user_data. O blob inteiro
+  -- é reescrito a cada PUT /api/data; se a auditoria vivesse lá dentro,
+  -- um bug (ou um PUT malicioso) no cliente apagaria o histórico junto.
+  -- Por viver numa tabela própria, sem NENHUM endpoint de update/delete
+  -- exposto (nem para admin), o registro é append-only de verdade: a
+  -- garantia de "não apagável" vem da ausência da capacidade na API, não
+  -- de uma checagem de permissão que poderia ser furada.
+  --
+  -- user_id e created_at são sempre preenchidos pelo servidor (sessão JWT
+  -- + relógio do servidor) — o cliente não escolhe esses dois campos, o
+  -- que é o que dá confiabilidade real ao "quem" (no nível de conta) e ao
+  -- "quando". Os demais campos (actor_person_*, action, module, description,
+  -- changes_json) descrevem o que aconteceu do ponto de vista da interface;
+  -- ver PLANO.md seção 6 para a limitação honesta sobre atribuição por
+  -- pessoa quando o casal compartilha um único login.
+  -- ---------------------------------------------------------------------
+  CREATE TABLE IF NOT EXISTS audit_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    actor_person_id TEXT,
+    actor_person_name TEXT NOT NULL,
+    action TEXT NOT NULL,
+    module TEXT NOT NULL,
+    entity_type TEXT NOT NULL,
+    entity_id TEXT,
+    description TEXT NOT NULL,
+    changes_json TEXT,
+    card_id TEXT,
+    account_id TEXT,
+    category_id TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_audit_user_created ON audit_log(user_id, created_at DESC);
 `);
 
 module.exports = db;

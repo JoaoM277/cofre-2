@@ -6,7 +6,8 @@
   "main": "server/index.js",
   "scripts": {
     "start": "node server/index.js",
-    "dev": "node server/index.js"
+    "dev": "node server/index.js",
+    "test:e2e": "node tests/e2e-modulo-financeiro.spec.js"
   },
   "engines": {
     "node": ">=18.0.0"
@@ -21,5 +22,8 @@
     "express-rate-limit": "^7.4.0",
     "helmet": "^7.1.0",
     "jsonwebtoken": "^9.0.2"
+  },
+  "devDependencies": {
+    "playwright": "^1.48.0"
   }
 }

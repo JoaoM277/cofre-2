@@ -11,12 +11,19 @@ const MAX_JSON_SIZE = 2 * 1024 * 1024; // 2MB por conta é bastante folga para e
 // express.json() já limita o tamanho do payload no nível do servidor).
 function isValidBundle(data) {
   if (!data || typeof data !== 'object') return false;
-  const arrayFields = ['categories', 'transactions', 'installments', 'cards', 'caixinhas', 'reminders', 'budgets'];
+  const arrayFields = [
+    'categories', 'transactions', 'installments', 'cards', 'caixinhas', 'reminders', 'budgets',
+    // accounts/purchases: novas entidades do módulo de cartões/faturas (ver PLANO.md).
+    'accounts', 'purchases'
+  ];
   for (const f of arrayFields) {
     if (!Array.isArray(data[f])) return false;
   }
-  if (typeof data.cardBills !== 'object') return false;
   if (typeof data.titheStatus !== 'object') return false;
+  // invoices substitui o antigo cardBills (mesmo formato de mapa "cardId-mKey" -> estado,
+  // mas sem valor manual — ver PLANO.md seção 2). Aceita qualquer um dos dois nomes
+  // presentes como objeto, pra não travar uma migração em andamento no cliente.
+  if (typeof data.invoices !== 'object' && typeof data.cardBills !== 'object') return false;
   if (data.settings !== null && typeof data.settings !== 'object') return false;
   return true;
 }
