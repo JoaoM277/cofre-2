@@ -189,7 +189,10 @@ const ICON_PATHS = {
   wallet: '<path d="M3 7.5A2.5 2.5 0 0 1 5.5 5h13A2.5 2.5 0 0 1 21 7.5v9A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5v-9Z"/><path d="M16 12.2h2.2"/><path d="M3 9.5h18"/>',
   check: '<path d="M4.5 12.5 9.5 17.5 19.5 6.5"/>',
   alertCircle: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5v5.5"/><circle cx="12" cy="16.3" r="0.9" fill="currentColor" stroke="none"/>',
-  plus: '<path d="M12 5v14M5 12h14"/>'
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  star: '<path d="M12 3.5 14.6 9l6 .9-4.3 4.3 1 6.1L12 17.3l-5.3 2.9 1-6L3.4 9.9l6-.9L12 3.5Z"/>',
+  message: '<path d="M4 5.5A2.3 2.3 0 0 1 6.3 3.2h11.4A2.3 2.3 0 0 1 20 5.5v8A2.3 2.3 0 0 1 17.7 15.8H10l-4.5 4v-4H6.3A2.3 2.3 0 0 1 4 13.5v-8Z"/>',
+  chevronDown: '<path d="M5 8.5 12 15l7-6.5"/>'
 };
 function icon(name, size){
   const s = size || 18;
@@ -340,6 +343,11 @@ let IA_LOADING = false;
 let AUTH_MODE = 'login';
 let AUTH_ERROR = '';
 let ADMIN_CLIENTS = [];
+let FEEDBACK_RATING = 0;
+let FEEDBACK_SENT = false;
+let FEEDBACK_ERROR = '';
+let FEEDBACK_ADMIN_LIST = [];
+let FEEDBACK_EXPANDED = {};
 
 // ---------------- API helper ----------------
 // Todas as chamadas usam credentials:'include' para enviar o cookie httpOnly de sessão,
@@ -804,41 +812,165 @@ function alertDialog(message, opts){
   `, {stack});
 }
 
-// ---------------- Aviso de novidade (toast, não é fixo na tela) ----------------
-// Um avisinho discreto, mostrado uma única vez por navegador (guardado em
-// localStorage — mesmo esquema do seletor de pessoa ativa), avisando sobre o
-// módulo financeiro novo. Some sozinho depois de alguns segundos ou ao
-// clicar no X — nunca fica "preso" na tela feito um banner permanente.
-let UPDATE_NOTICE_INJECTED = false;
-const UPDATE_NOTICE_KEY = 'cofre_notice_seen_financeiro_v1';
-function maybeShowUpdateNotice(){
-  if(UPDATE_NOTICE_INJECTED) return;
-  if(!SESSION || !DATA || !DATA.settings) return; // só depois do onboarding, com o app de verdade na tela
-  let seen = false;
-  try{ seen = localStorage.getItem(UPDATE_NOTICE_KEY) === '1'; }catch(e){}
-  if(seen) return;
-  UPDATE_NOTICE_INJECTED = true;
-  try{ localStorage.setItem(UPDATE_NOTICE_KEY, '1'); }catch(e){}
-
-  const wrap = document.createElement('div');
-  wrap.className = 'update-toast';
-  wrap.innerHTML = `
-    <div class="update-toast-icon">${icon('card',17)}</div>
-    <div class="update-toast-body">
-      <div class="update-toast-title">Novidade no Cofre</div>
-      <div class="update-toast-text">Cartão de crédito agora tem fatura automática, parcelamento e uma aba de Auditoria — dá uma olhada em "Cartões" no menu.</div>
-    </div>
-    <button class="update-toast-close" aria-label="Fechar aviso" onclick="dismissUpdateNotice()">${icon('x',14)}</button>
-  `;
-  document.body.appendChild(wrap);
-  requestAnimationFrame(()=> wrap.classList.add('show'));
-  setTimeout(dismissUpdateNotice, 9000);
+// ---------------- Banner de feedback (aba Cartões) ----------------
+// Substituiu o antigo toast de canto sobre o módulo financeiro (que já
+// cumpriu o papel dele). Fica no topo da aba Cartões, no formato
+// banner/card pedido, com um botão que já leva pra aba Feedback. Some ao
+// clicar no X ou ao usar o botão — guardado em localStorage pra não voltar
+// depois de visto (mesmo esquema do antigo toast e do seletor de pessoa).
+const FEEDBACK_BANNER_KEY = 'cofre_feedback_banner_dismissed_v1';
+function feedbackBannerDismissed(){
+  try{ return localStorage.getItem(FEEDBACK_BANNER_KEY) === '1'; }catch(e){ return false; }
 }
-function dismissUpdateNotice(){
-  const el = document.querySelector('.update-toast');
-  if(!el) return;
-  el.classList.remove('show');
-  setTimeout(()=>el.remove(), 350);
+function dismissFeedbackBanner(){
+  try{ localStorage.setItem(FEEDBACK_BANNER_KEY, '1'); }catch(e){}
+  const el = document.querySelector('.feedback-banner');
+  if(el) el.remove();
+}
+function goToFeedbackFromBanner(){
+  try{ localStorage.setItem(FEEDBACK_BANNER_KEY, '1'); }catch(e){}
+  switchTab('feedback');
+}
+function renderFeedbackBanner(){
+  if(feedbackBannerDismissed()) return '';
+  return `
+    <div class="card feedback-banner">
+      <div class="notice-icon">${icon('star',18)}</div>
+      <div class="notice-body">
+        <div class="notice-title">Agora contamos com uma área de feedback</div>
+        <div class="notice-text">Poderia nos dizer como está sendo sua experiência?</div>
+      </div>
+      <button class="btn small" onclick="goToFeedbackFromBanner()">Deixar feedback</button>
+      <button class="notice-close" aria-label="Fechar aviso" onclick="dismissFeedbackBanner()">${icon('x',14)}</button>
+    </div>
+  `;
+}
+
+// ---------------- Feedback (cliente) ----------------
+function renderFeedbackForm(){
+  if(FEEDBACK_SENT){
+    return `
+      <div class="card feedback-success">
+        <div class="feedback-success-icon">${icon('check',30)}</div>
+        <h3>Feedback enviado</h3>
+        <div class="sub" style="margin:8px 0 20px;">Muito obrigado! Sua opinião ajuda a melhorar o Cofre.</div>
+        <button class="btn" onclick="resetFeedbackForm()">Enviar outro feedback</button>
+      </div>
+    `;
+  }
+  return `
+    <div class="card" style="max-width:520px;">
+      <div class="sub" style="margin-bottom:18px;">Conte como está sendo sua experiência com o Cofre — o que está funcionando bem e o que podia melhorar.</div>
+      <div class="field" style="margin-bottom:14px;">
+        <label>Sua nota</label>
+        <div class="star-rating" id="fb-stars">
+          ${[1,2,3,4,5].map(n=>`<button type="button" class="star-btn ${n<=FEEDBACK_RATING?'filled':''}" data-n="${n}" onclick="setFeedbackRating(${n})" aria-label="Nota ${n} de 5">${icon('star',26)}</button>`).join('')}
+        </div>
+      </div>
+      <div class="field" style="margin-bottom:14px;">
+        <label>Nome <span class="sub" style="font-weight:400;">(opcional)</span></label>
+        <input id="fb-name" maxlength="120" placeholder="Como podemos te chamar?">
+      </div>
+      <div class="field" style="margin-bottom:14px;">
+        <label>Mensagem</label>
+        <textarea id="fb-message" maxlength="500" rows="5" placeholder="Escreva sua avaliação, sugestão ou o que quiser compartilhar..." oninput="updateFeedbackCounter()"></textarea>
+        <div class="field-hint" id="fb-counter">0/500</div>
+      </div>
+      <div class="error-msg" id="fb-error"></div>
+      <button class="btn" onclick="submitFeedback()">Enviar feedback</button>
+    </div>
+  `;
+}
+function setFeedbackRating(n){
+  FEEDBACK_RATING = n;
+  const wrap = document.getElementById('fb-stars');
+  if(!wrap) return;
+  wrap.querySelectorAll('.star-btn').forEach(btn=>{
+    const v = Number(btn.getAttribute('data-n'));
+    btn.classList.toggle('filled', v<=n);
+  });
+}
+function updateFeedbackCounter(){
+  const el = document.getElementById('fb-message');
+  const counter = document.getElementById('fb-counter');
+  if(el && counter) counter.textContent = `${el.value.length}/500`;
+}
+async function submitFeedback(){
+  const errEl = document.getElementById('fb-error');
+  const name = val('fb-name').trim();
+  const message = val('fb-message').trim();
+  if(errEl) errEl.textContent = '';
+  if(!FEEDBACK_RATING){ if(errEl) errEl.textContent = 'Escolha uma nota de 1 a 5.'; return; }
+  if(!message){ if(errEl) errEl.textContent = 'Escreva uma mensagem antes de enviar.'; return; }
+  if(message.length > 500){ if(errEl) errEl.textContent = 'A mensagem não pode passar de 500 caracteres.'; return; }
+  try{
+    await api('/feedback', {method:'POST', body:{rating:FEEDBACK_RATING, name: name || undefined, message}});
+    FEEDBACK_SENT = true;
+    FEEDBACK_RATING = 0;
+    render();
+  }catch(e){
+    if(errEl) errEl.textContent = e.message || 'Não foi possível enviar seu feedback. Tente novamente.';
+  }
+}
+function resetFeedbackForm(){
+  FEEDBACK_SENT = false;
+  FEEDBACK_RATING = 0;
+  render();
+}
+
+// ---------------- Feedbacks (admin) ----------------
+async function loadAndRenderFeedbackAdmin(){
+  try{
+    const res = await api('/feedback/admin?limit=300');
+    FEEDBACK_ADMIN_LIST = res.feedback || [];
+  }catch(e){
+    FEEDBACK_ADMIN_LIST = [];
+  }
+  if(TAB==='feedbacks-admin'){
+    const content = document.getElementById('tab-content');
+    if(content) content.innerHTML = renderFeedbackAdmin();
+  }
+}
+function toggleFeedbackExpanded(id){
+  FEEDBACK_EXPANDED[id] = !FEEDBACK_EXPANDED[id];
+  const content = document.getElementById('tab-content');
+  if(content) content.innerHTML = renderFeedbackAdmin();
+}
+function renderFeedbackAdmin(){
+  return `
+    <div class="sub" style="margin-bottom:14px;">Feedbacks enviados por todas as contas. Toque num item para ver a nota e a mensagem completa.</div>
+    <div class="row-list list-grouped">
+      ${FEEDBACK_ADMIN_LIST.length===0 ? '<div class="empty"><span class="empty-title">Nenhum feedback ainda</span>Assim que alguém enviar, aparece aqui.</div>' :
+        FEEDBACK_ADMIN_LIST.map(f=>renderFeedbackAdminRow(f)).join('')}
+    </div>
+  `;
+}
+function renderFeedbackAdminRow(f){
+  const d = new Date(String(f.createdAt).replace(' ','T')+'Z');
+  const when = isNaN(d.getTime()) ? f.createdAt : d.toLocaleString('pt-BR', {day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit'});
+  const expanded = !!FEEDBACK_EXPANDED[f.id];
+  const displayName = f.name || f.accountName || 'Anônimo';
+  return `
+    <div class="item-row feedback-admin-row" style="flex-direction:column; align-items:stretch; cursor:pointer;" onclick="toggleFeedbackExpanded(${f.id})">
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
+        <div class="item-left">
+          <div>
+            <div class="item-desc"><strong>${esc(displayName)}</strong></div>
+            <div class="item-meta">${when}</div>
+          </div>
+        </div>
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span class="star-rating-mini">${[1,2,3,4,5].map(n=>`<span class="${n<=f.rating?'filled':''}">${icon('star',14)}</span>`).join('')}</span>
+          <span class="feedback-chevron ${expanded?'open':''}">${icon('chevronDown',16)}</span>
+        </div>
+      </div>
+      ${expanded?`
+      <div class="feedback-admin-detail">
+        <div class="item-meta">${esc(f.accountName||'')} · ${esc(f.accountEmail||'')}</div>
+        <div class="feedback-admin-message">${esc(f.message)}</div>
+      </div>`:''}
+    </div>
+  `;
 }
 
 // ================= AUTH SCREENS =================
@@ -1026,8 +1158,12 @@ function getNav(){
     {id:'lembretes', label:'Lembretes', icon:'bell'},
     {id:'auditoria', label:'Auditoria', icon:'history'},
     {id:'ia', label:'Conselheira IA', icon:'sparkles'},
+    {id:'feedback', label:'Feedback', icon:'star'},
   ];
-  if(SESSION && SESSION.role==='admin') nav.push({id:'admin', label:'Painel Admin', icon:'shield'});
+  if(SESSION && SESSION.role==='admin'){
+    nav.push({id:'admin', label:'Painel Admin', icon:'shield'});
+    nav.push({id:'feedbacks-admin', label:'Feedbacks', icon:'message'});
+  }
   return nav;
 }
 function changeMonth(delta){ CURRENT_MONTH = new Date(CURRENT_MONTH.getFullYear(), CURRENT_MONTH.getMonth()+delta, 1); render(); }
@@ -1104,8 +1240,9 @@ function render(){
   else if(TAB==='lembretes') content.innerHTML = renderLembretes();
   else if(TAB==='auditoria'){ content.innerHTML = '<div class="empty">Carregando...</div>'; loadAndRenderAudit(); }
   else if(TAB==='ia') content.innerHTML = renderConselheira();
+  else if(TAB==='feedback') content.innerHTML = renderFeedbackForm();
+  else if(TAB==='feedbacks-admin'){ content.innerHTML = '<div class="empty">Carregando...</div>'; loadAndRenderFeedbackAdmin(); }
   else if(TAB==='admin'){ content.innerHTML = '<div class="empty">Carregando...</div>'; loadAndRenderAdmin(); }
-  maybeShowUpdateNotice();
 }
 
 // ---------------- Dashboard ----------------
@@ -2178,6 +2315,7 @@ function renderCartao(mKey){
   const people = getPeople();
   const cards = DATA.cards||[];
   return `
+    ${renderFeedbackBanner()}
     ${renderTipCard('cartao')}
     <div class="section-head">
       <div class="sub">Um painel por cartão — a fatura é sempre calculada a partir dos lançamentos, nunca digitada.</div>

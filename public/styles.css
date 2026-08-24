@@ -507,31 +507,58 @@ input:focus, select:focus, textarea:focus{outline:none; border-color:var(--brass
 }
 
 /* =====================================================================
-   AVISO DE NOVIDADE — toast discreto, some sozinho (não é um banner fixo).
+   BANNER DE FEEDBACK — card fixo no topo da aba Cartões (substitui o
+   antigo toast de canto). Fica no fluxo normal da página, não sobrepõe
+   conteúdo, e some (localStorage) ao clicar no X ou no botão de ação.
    ===================================================================== */
-.update-toast{
-  position:fixed; right:20px; bottom:20px; z-index:200; max-width:340px;
-  display:flex; gap:12px; align-items:flex-start;
-  background:var(--paper-card); border:1px solid var(--rule); border-radius:var(--radius-lg);
-  box-shadow:var(--shadow-pop); padding:14px 16px;
-  opacity:0; transform:translateY(12px);
-  transition:opacity var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-out);
-  pointer-events:none;
+.feedback-banner{
+  display:flex; gap:12px; align-items:center; margin-bottom:16px;
+  padding:14px 16px;
 }
-.update-toast.show{ opacity:1; transform:translateY(0); pointer-events:auto; }
-.update-toast-icon{
+.notice-icon{
   flex-shrink:0; width:34px; height:34px; border-radius:50%;
   background:var(--brass-tint); color:var(--brass-deep);
   display:flex; align-items:center; justify-content:center;
 }
-.update-toast-body{ flex:1; min-width:0; }
-.update-toast-title{ font-weight:700; font-size:13.5px; margin-bottom:3px; color:var(--ink); }
-.update-toast-text{ font-size:12.5px; color:var(--ink-soft); line-height:1.45; }
-.update-toast-close{
+.notice-body{ flex:1; min-width:0; }
+.notice-title{ font-weight:700; font-size:13.5px; margin-bottom:2px; color:var(--ink); }
+.notice-text{ font-size:12.5px; color:var(--ink-soft); line-height:1.45; }
+.notice-close{
   flex-shrink:0; background:none; border:none; cursor:pointer; color:var(--ink-soft);
-  padding:3px; border-radius:6px; display:flex; margin:-2px -4px 0 0;
+  padding:3px; border-radius:6px; display:flex;
 }
-.update-toast-close:hover{ background:var(--paper-sunken); }
+.notice-close:hover{ background:var(--paper-sunken); }
 @media (max-width:640px){
-  .update-toast{ left:16px; right:16px; bottom:16px; max-width:none; }
+  .feedback-banner{ flex-wrap:wrap; }
+  .notice-body{ order:1; flex-basis:100%; }
+  .feedback-banner > .btn{ order:2; }
+  .notice-close{ order:3; margin-left:auto; }
 }
+
+/* =====================================================================
+   FEEDBACK — formulário do cliente e painel do admin.
+   ===================================================================== */
+.star-rating{ display:flex; gap:4px; }
+.star-btn{
+  width:auto; min-height:0; background:none; border:none; padding:2px;
+  color:var(--rule); cursor:pointer; transition:color var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
+}
+.star-btn:hover{ color:var(--brass); transform:scale(1.08); }
+.star-btn.filled{ color:var(--brass-deep); }
+.star-btn.filled svg{ fill:var(--brass-deep); }
+.field-hint{ font-size:11.5px; color:var(--ink-soft); text-align:right; margin-top:4px; }
+.feedback-success{ max-width:520px; margin:0 auto; text-align:center; padding:32px 24px; }
+.feedback-success-icon{
+  width:56px; height:56px; margin:0 auto 12px; border-radius:50%;
+  background:var(--verdigris-tint); color:var(--verdigris);
+  display:flex; align-items:center; justify-content:center;
+}
+.star-rating-mini{ display:flex; gap:1px; color:var(--rule); flex-shrink:0; }
+.star-rating-mini .filled{ color:var(--brass-deep); }
+.star-rating-mini .filled svg{ fill:var(--brass-deep); }
+.feedback-admin-row{ transition:background var(--dur-fast) var(--ease-out); }
+.feedback-admin-row:hover{ background:var(--paper-sunken); }
+.feedback-chevron{ color:var(--ink-soft); display:flex; transition:transform var(--dur-fast) var(--ease-out); }
+.feedback-chevron.open{ transform:rotate(180deg); }
+.feedback-admin-detail{ margin-top:10px; padding-top:10px; border-top:1px solid var(--rule); }
+.feedback-admin-message{ font-size:13.5px; color:var(--ink); line-height:1.55; margin-top:6px; white-space:pre-wrap; }

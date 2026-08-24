@@ -10,6 +10,7 @@ const financeRoutes = require('./routes/finance');
 const adminRoutes = require('./routes/admin');
 const aiRoutes = require('./routes/ai');
 const auditRoutes = require('./routes/audit');
+const feedbackRoutes = require('./routes/feedback');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -53,6 +54,7 @@ app.use('/api', financeRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/ai', aiRoutes);
 app.use('/api/audit', auditRoutes);
+app.use('/api/feedback', feedbackRoutes);
 
 app.get('/api/health', (req, res) => res.json({ ok: true }));
 

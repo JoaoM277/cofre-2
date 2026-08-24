@@ -72,6 +72,29 @@ db.exec(`
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
   CREATE INDEX IF NOT EXISTS idx_audit_user_created ON audit_log(user_id, created_at DESC);
+
+  -- ---------------------------------------------------------------------
+  -- Feedback — igual à auditoria, uma tabela própria fora do blob de
+  -- user_data (não faria sentido um feedback viver dentro dos dados
+  -- financeiros de uma conta, já que quem precisa ver TODOS os feedbacks,
+  -- de TODAS as contas, é o admin — o blob de user_data é sempre isolado
+  -- por conta e nunca é lido entre contas).
+  --
+  -- user_id e created_at são sempre preenchidos pelo servidor (sessão JWT
+  -- + relógio do servidor), nunca pelo cliente. O "nome" é um campo livre
+  -- e opcional que a pessoa escolhe mostrar NESSE feedback (pode divergir
+  -- do nome da própria conta, ou ficar em branco) — o vínculo real com a
+  -- conta continua garantido por user_id, mesmo quando o nome fica vazio.
+  -- ---------------------------------------------------------------------
+  CREATE TABLE IF NOT EXISTS feedback (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    rating INTEGER NOT NULL CHECK(rating BETWEEN 1 AND 5),
+    name TEXT,
+    message TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_feedback_created ON feedback(created_at DESC);
 `);
 
 module.exports = db;

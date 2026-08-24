@@ -260,6 +260,45 @@ function check(label, cond) {
   check('auditoria mostra o cancelamento da compra à vista', auditText2.includes('cancelou') && auditText2.includes('Uber'));
 
   await page.screenshot({ path: path.join(SCREEN_DIR, 'auditoria.png'), fullPage: true });
+
+  // ---- Sistema de feedback: banner na aba Cartões → formulário → painel admin ----
+  await page.click('button:has-text("Cartões")');
+  await page.waitForTimeout(400);
+  const cartoesText = await page.locator('#tab-content').innerText();
+  check('banner de feedback aparece na aba Cartões', cartoesText.includes('Agora contamos com uma área de feedback'));
+
+  await page.click('.feedback-banner button:has-text("Deixar feedback")');
+  await page.waitForTimeout(400);
+  check('botão do banner leva pra aba Feedback', await page.locator('#fb-message').count() > 0);
+
+  const fbMessage = 'Muito bom, só senti falta de exportar relatório em PDF.';
+  await page.click('.star-btn[aria-label="Nota 4 de 5"]');
+  await page.fill('#fb-name', 'Pedro Teste');
+  await page.fill('#fb-message', fbMessage);
+  await page.waitForTimeout(150);
+  const counterText = await page.locator('#fb-counter').innerText();
+  check('contador de caracteres reflete o texto digitado', counterText === `${fbMessage.length}/500`);
+  check('estrelas marcadas até a nota escolhida', await page.locator('.star-btn.filled').count() === 4);
+
+  await page.click('button[onclick="submitFeedback()"]');
+  await page.waitForTimeout(500);
+  check('feedback enviado mostra tela de confirmação', await page.locator('.feedback-success', { hasText: 'Feedback enviado' }).count() > 0);
+
+  await page.click('button[onclick="switchTab(\'cartao\')"]');
+  await page.waitForTimeout(400);
+  check('banner some da aba Cartões depois de usado', await page.locator('.feedback-banner').count() === 0);
+
+  await page.click('button[onclick="switchTab(\'feedbacks-admin\')"]');
+  await page.waitForTimeout(600);
+  const adminFbText = await page.locator('#tab-content').innerText();
+  check('painel admin lista o feedback com nome e data, mas sem a mensagem completa', adminFbText.includes('Pedro Teste') && !adminFbText.includes(fbMessage));
+
+  await page.click('.feedback-admin-row');
+  await page.waitForTimeout(300);
+  const adminFbExpanded = await page.locator('#tab-content').innerText();
+  check('expandir o item mostra a mensagem completa do feedback', adminFbExpanded.includes(fbMessage));
+
+  await page.screenshot({ path: path.join(SCREEN_DIR, 'feedback-admin.png'), fullPage: true });
   await page.click('button:has-text("Cartões")');
   await page.waitForTimeout(400);
   await page.screenshot({ path: path.join(SCREEN_DIR, 'cartoes.png'), fullPage: true });

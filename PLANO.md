@@ -381,12 +381,65 @@ Ficou de fora, deliberadamente: os dois `confirm()`/`alert()` do Painel
 Admin (remover conta de cliente) — é uma tela separada, de uso raro e só
 por admin, fora do escopo do módulo financeiro.
 
-## 15. Aviso de novidade (toast, não fixo)
+## 15. Aviso de novidade (toast, não fixo) — substituído pelo banner da seção 16
 
-Um aviso simples aparece uma vez, no canto inferior direito, contando
-sobre o módulo de Cartões/Faturas/Auditoria — some sozinho depois de 9s ou
-ao clicar no X, e nunca mais aparece depois disso (controlado por uma
-chave em `localStorage`, `cofre_notice_seen_financeiro_v1`, checada em
-`maybeShowUpdateNotice()` a cada `render()` mas só dispara a primeira vez
-que encontra a conta com onboarding concluído). Testado que não reaparece
-depois de um reload de página.
+Um aviso simples aparecia uma vez, no canto inferior direito, contando
+sobre o módulo de Cartões/Faturas/Auditoria — sumia sozinho depois de 9s
+ou ao clicar no X, e nunca mais aparecia depois disso (controlado por uma
+chave em `localStorage`). Esse toast foi removido e trocado pelo banner de
+feedback (seção 16), que pediu o mesmo tipo de aviso "uma vez só, dispensável"
+mas agora fixo no fluxo da página em vez de flutuante — ver seção 16 para
+o mecanismo atual.
+
+## 16. Sistema de feedback
+
+Pedido: uma área pra qualquer usuário mandar uma avaliação (nota + nome
+opcional + mensagem) pro time, um painel exclusivo de admin pra ler tudo
+o que chegou, e um banner na aba Cartões convidando pra essa área — no
+lugar do toast da seção 15.
+
+**Banco (`server/db.js`).** Tabela `feedback` própria, fora do blob de
+`user_data`, no mesmo espírito da `audit_log` (seção 6): quem precisa
+enxergar os feedbacks é o admin, olhando TODAS as contas de uma vez — não
+faz sentido um dado assim viver isolado dentro dos dados financeiros de
+uma única conta. `user_id` e `created_at` são sempre preenchidos pelo
+servidor (sessão JWT + relógio do servidor), nunca pelo cliente — mesma
+garantia de confiabilidade da auditoria. O campo `name` é livre e opcional:
+é o nome que a pessoa escolhe *mostrar naquele feedback*, podendo divergir
+do nome da conta ou ficar em branco; o vínculo real com a conta continua
+garantido por `user_id`. Sem rotas de update/delete — igual à auditoria,
+é histórico append-only por ausência de capacidade na API, não por checagem
+de permissão.
+
+**Rotas (`server/routes/feedback.js`).** `POST /api/feedback` — qualquer
+conta autenticada, valida nota (inteiro 1–5), mensagem (obrigatória, até
+500 caracteres) e nome (opcional, até 120). `GET /api/feedback/admin` — só
+admin (`requireAdmin`), lista todos os feedbacks com o nome/email da conta
+que enviou, paginado (limit/offset).
+
+**Tela de feedback (cliente).** Nova aba "Feedback", visível pra qualquer
+conta. Nota por estrelas (1–5, clique direto marca sem precisar re-renderizar
+a tela inteira — evita perder o que já foi digitado nos outros campos),
+nome opcional, mensagem com `maxlength=500` e contador de caracteres ao
+vivo. Ao enviar com sucesso, mostra uma tela de confirmação com botão pra
+"Enviar outro feedback".
+
+**Painel de feedbacks (admin).** Nova aba "Feedbacks", só aparece pra quem
+tem `role==='admin'` (mesmo `if` que já controlava a aba "Painel Admin").
+Lista inicialmente só data/hora e nome de quem enviou, mais a nota em
+estrelas — a mensagem completa só aparece ao clicar no item (accordion:
+clique de novo fecha).
+
+**Banner (aba Cartões).** Substituiu o toast da seção 15: agora é um card
+fixo no topo da aba Cartões (não flutuante), com o texto pedido e um botão
+"Deixar feedback" que já leva pra aba Feedback. Some ao clicar no botão ou
+no X, guardado em `localStorage` (`cofre_feedback_banner_dismissed_v1`)
+pra não voltar depois de visto — mesmo padrão do antigo toast e do
+seletor de pessoa.
+
+**Testado (`tests/e2e-modulo-financeiro.spec.js`):** banner aparece na aba
+Cartões; botão do banner leva pro formulário; contador de caracteres e
+seleção de estrelas funcionam; envio mostra a tela de confirmação; banner
+some depois de usado; painel admin lista nome+data sem expor a mensagem
+até o clique; clicar no item expande e mostra a mensagem completa. 35/35
+checks passando (27 anteriores + 8 novos).
