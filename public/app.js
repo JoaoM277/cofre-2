@@ -192,12 +192,148 @@ const ICON_PATHS = {
   plus: '<path d="M12 5v14M5 12h14"/>',
   star: '<path d="M12 3.5 14.6 9l6 .9-4.3 4.3 1 6.1L12 17.3l-5.3 2.9 1-6L3.4 9.9l6-.9L12 3.5Z"/>',
   message: '<path d="M4 5.5A2.3 2.3 0 0 1 6.3 3.2h11.4A2.3 2.3 0 0 1 20 5.5v8A2.3 2.3 0 0 1 17.7 15.8H10l-4.5 4v-4H6.3A2.3 2.3 0 0 1 4 13.5v-8Z"/>',
-  chevronDown: '<path d="M5 8.5 12 15l7-6.5"/>'
+  chevronDown: '<path d="M5 8.5 12 15l7-6.5"/>',
+  download: '<path d="M12 3.5v11"/><path d="M7.5 10 12 14.5 16.5 10"/><path d="M4.5 17.5v2A2 2 0 0 0 6.5 21.5h11a2 2 0 0 0 2-2v-2"/>'
 };
 function icon(name, size){
   const s = size || 18;
   const body = ICON_PATHS[name] || '';
   return `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
+}
+
+// ---------------- Toasts flutuantes (componente genérico) ----------------
+// Um único mecanismo, reaproveitado por dois avisos diferentes (instalar o
+// PWA e conhecer a área de feedback): anexado direto no <body> — igual ao
+// modal (ver openModal) — pra sobreviver aos innerHTML de render() em vez
+// de ser redesenhado (e perdido) a cada troca de aba. Empilha vários toasts
+// sem eles se sobreporem, com fade-in/out suave (--dur-base/--ease-out, os
+// mesmos tokens de transição usados no resto do app).
+function pushFloatingToast(id, html, opts){
+  opts = opts || {};
+  removeFloatingToast(id, true);
+  const el = document.createElement('div');
+  el.id = id;
+  el.className = 'floating-toast' + (opts.clickable ? ' clickable' : '');
+  el.innerHTML = html;
+  document.body.appendChild(el);
+  requestAnimationFrame(() => requestAnimationFrame(() => el.classList.add('show')));
+  repositionFloatingToasts();
+  return el;
+}
+function removeFloatingToast(id, immediate){
+  const el = document.getElementById(id);
+  if(!el) return;
+  if(immediate){ el.remove(); repositionFloatingToasts(); return; }
+  el.classList.remove('show');
+  setTimeout(() => { el.remove(); repositionFloatingToasts(); }, 220);
+}
+function repositionFloatingToasts(){
+  const toasts = Array.from(document.querySelectorAll('.floating-toast'));
+  let offset = 20;
+  toasts.forEach(t => {
+    t.style.bottom = offset + 'px';
+    offset += t.offsetHeight + 12;
+  });
+}
+
+// ---------------- Instalar como PWA ----------------
+// O Chrome/Android (e desktop Chrome/Edge) dispara `beforeinstallprompt`
+// quando o app é instalável — o listener fica registrado desde o carregamento
+// do script (antes até do login) pra não perder o evento caso ele chegue
+// cedo. No iOS/Safari esse evento não existe: lá a única forma de instalar é
+// manual (Compartilhar → Adicionar à Tela de Início), então mostramos as
+// instruções via alertDialog() em vez do prompt nativo.
+const PWA_TOAST_KEY = 'cofre_pwa_install_dismissed_v1';
+let DEFERRED_INSTALL_PROMPT = null;
+let PWA_TOAST_SHOWN_THIS_SESSION = false;
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  DEFERRED_INSTALL_PROMPT = e;
+  maybeShowPwaInstallToast();
+});
+window.addEventListener('appinstalled', () => {
+  DEFERRED_INSTALL_PROMPT = null;
+  try{ localStorage.setItem(PWA_TOAST_KEY, '1'); }catch(e){}
+  removeFloatingToast('pwa-toast');
+});
+function isStandaloneDisplay(){
+  try{
+    return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+  }catch(e){ return false; }
+}
+function isIOSDevice(){
+  const ua = navigator.userAgent || '';
+  const iOSByUA = /iPad|iPhone|iPod/.test(ua) && !window.MSStream;
+  const iPadOS13 = navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1;
+  return iOSByUA || iPadOS13;
+}
+function maybeShowPwaInstallToast(){
+  if(PWA_TOAST_SHOWN_THIS_SESSION) return;
+  if(!SESSION || !DATA || !DATA.settings) return; // só depois de logado e com onboarding feito
+  if(isStandaloneDisplay()) return; // já instalado/rodando como app
+  let dismissed = false;
+  try{ dismissed = localStorage.getItem(PWA_TOAST_KEY) === '1'; }catch(e){}
+  if(dismissed) return;
+  const canPromptNative = !!DEFERRED_INSTALL_PROMPT;
+  const ios = isIOSDevice();
+  if(!canPromptNative && !ios) return; // nada a oferecer aqui (sem suporte, ou navegador ainda não liberou o evento)
+  PWA_TOAST_SHOWN_THIS_SESSION = true;
+  const html = `
+    <div class="notice-icon">${icon('download', 16)}</div>
+    <div class="notice-body">
+      <div class="notice-title">Instale o Cofre no seu aparelho</div>
+      <div class="notice-text">${ios ? 'Adicione à tela de início pra abrir como um app, direto do Safari.' : 'Adicione à tela inicial pra abrir direto, sem precisar do navegador.'}</div>
+    </div>
+    <button class="btn small" onclick="${canPromptNative ? 'triggerPwaInstall()' : 'showIosInstallInstructions()'}">${canPromptNative ? 'Instalar' : 'Como instalar'}</button>
+    <button class="notice-close" aria-label="Fechar aviso" onclick="dismissPwaInstallToast()">${icon('x', 13)}</button>
+  `;
+  pushFloatingToast('pwa-toast', html);
+}
+function dismissPwaInstallToast(){
+  try{ localStorage.setItem(PWA_TOAST_KEY, '1'); }catch(e){}
+  removeFloatingToast('pwa-toast');
+}
+async function triggerPwaInstall(){
+  if(!DEFERRED_INSTALL_PROMPT){ dismissPwaInstallToast(); return; }
+  const promptEvent = DEFERRED_INSTALL_PROMPT;
+  DEFERRED_INSTALL_PROMPT = null;
+  try{ promptEvent.prompt(); await promptEvent.userChoice; }catch(e){}
+  dismissPwaInstallToast();
+}
+function showIosInstallInstructions(){
+  dismissPwaInstallToast();
+  alertDialog('Toque no ícone de compartilhamento (o quadrado com uma seta pra cima) na barra do Safari e depois em "Adicionar à Tela de Início".', {title: 'Instalar o Cofre', okLabel: 'Entendi'});
+}
+
+// ---------------- Aviso minimalista: nova área de feedback ----------------
+// Some sozinho depois de alguns segundos (fade-out) e, uma vez visto ou
+// fechado, não aparece de novo (localStorage) — diferente do banner fixo
+// da aba Cartões (renderFeedbackBanner), que fica até ser dispensado ali.
+// Os dois são independentes de propósito: este é só um "avisou, sumiu"; o
+// banner é o lembrete recorrente enquanto a pessoa não interage com ele.
+const FEEDBACK_TOAST_KEY = 'cofre_feedback_toast_seen_v1';
+let FEEDBACK_TOAST_SHOWN_THIS_SESSION = false;
+function maybeShowFeedbackToast(){
+  if(FEEDBACK_TOAST_SHOWN_THIS_SESSION) return;
+  if(TAB === 'feedback') return; // já está lá, não faz sentido anunciar
+  let seen = false;
+  try{ seen = localStorage.getItem(FEEDBACK_TOAST_KEY) === '1'; }catch(e){}
+  if(seen) return;
+  FEEDBACK_TOAST_SHOWN_THIS_SESSION = true;
+  try{ localStorage.setItem(FEEDBACK_TOAST_KEY, '1'); }catch(e){}
+  const html = `
+    <div class="notice-icon">${icon('message', 15)}</div>
+    <div class="notice-body" onclick="goToFeedbackFromToast()">
+      <div class="notice-text">Sua opinião é importante! Conheça nossa nova área de feedback.</div>
+    </div>
+    <button class="notice-close" aria-label="Fechar aviso" onclick="removeFloatingToast('feedback-toast')">${icon('x', 13)}</button>
+  `;
+  pushFloatingToast('feedback-toast', html, {clickable: true});
+  setTimeout(() => removeFloatingToast('feedback-toast'), 4800);
+}
+function goToFeedbackFromToast(){
+  removeFloatingToast('feedback-toast', true);
+  switchTab('feedback');
 }
 
 // ---------------- Splash screen ----------------
@@ -348,6 +484,8 @@ let FEEDBACK_SENT = false;
 let FEEDBACK_ERROR = '';
 let FEEDBACK_ADMIN_LIST = [];
 let FEEDBACK_EXPANDED = {};
+let FEEDBACK_NAME_TOUCHED = false;
+let FEEDBACK_NAME_DRAFT = '';
 
 // ---------------- API helper ----------------
 // Todas as chamadas usam credentials:'include' para enviar o cookie httpOnly de sessão,
@@ -869,7 +1007,7 @@ function renderFeedbackForm(){
       </div>
       <div class="field" style="margin-bottom:14px;">
         <label>Nome <span class="sub" style="font-weight:400;">(opcional)</span></label>
-        <input id="fb-name" maxlength="120" placeholder="Como podemos te chamar?">
+        <input id="fb-name" maxlength="120" placeholder="Como podemos te chamar?" value="${esc(FEEDBACK_NAME_TOUCHED ? FEEDBACK_NAME_DRAFT : getFeedbackAutoName())}" oninput="updateFeedbackNameDraft()">
       </div>
       <div class="field" style="margin-bottom:14px;">
         <label>Mensagem</label>
@@ -880,6 +1018,26 @@ function renderFeedbackForm(){
       <button class="btn" onclick="submitFeedback()">Enviar feedback</button>
     </div>
   `;
+}
+// O app não tem uso anônimo (toda tela fica atrás de login), então "usuário
+// logado" aqui é sempre garantido — o nome vem de quem está marcado como
+// ativo no seletor "Você é" (mesmo dado já usado pra atribuir a auditoria,
+// ver getActivePersonId/personSwitcherHtml), com o nome da conta (SESSION)
+// como respaldo pra contas sem pessoas cadastradas ainda. O campo continua
+// editável: quem quiser mandar com outro nome (ou vazio) só apagar/trocar.
+function getFeedbackAutoName(){
+  if(DATA && DATA.settings){
+    const people = getPeople();
+    if(people.length){
+      const name = personName(getActivePersonId());
+      if(name && name !== '—') return name;
+    }
+  }
+  return (SESSION && SESSION.name) || '';
+}
+function updateFeedbackNameDraft(){
+  FEEDBACK_NAME_TOUCHED = true;
+  FEEDBACK_NAME_DRAFT = val('fb-name');
 }
 function setFeedbackRating(n){
   FEEDBACK_RATING = n;
@@ -915,6 +1073,8 @@ async function submitFeedback(){
 function resetFeedbackForm(){
   FEEDBACK_SENT = false;
   FEEDBACK_RATING = 0;
+  FEEDBACK_NAME_TOUCHED = false;
+  FEEDBACK_NAME_DRAFT = '';
   render();
 }
 
@@ -1243,6 +1403,9 @@ function render(){
   else if(TAB==='feedback') content.innerHTML = renderFeedbackForm();
   else if(TAB==='feedbacks-admin'){ content.innerHTML = '<div class="empty">Carregando...</div>'; loadAndRenderFeedbackAdmin(); }
   else if(TAB==='admin'){ content.innerHTML = '<div class="empty">Carregando...</div>'; loadAndRenderAdmin(); }
+
+  maybeShowFeedbackToast();
+  maybeShowPwaInstallToast();
 }
 
 // ---------------- Dashboard ----------------

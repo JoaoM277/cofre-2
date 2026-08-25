@@ -536,6 +536,27 @@ input:focus, select:focus, textarea:focus{outline:none; border-color:var(--brass
 }
 
 /* =====================================================================
+   TOASTS FLUTUANTES — componente genérico no canto da tela, reaproveitado
+   pelo aviso de instalar o PWA e pelo aviso minimalista de feedback (ambos
+   usam .notice-icon/.notice-body/.notice-title/.notice-text/.notice-close
+   acima). Empilham via JS (repositionFloatingToasts ajusta `bottom`).
+   ===================================================================== */
+.floating-toast{
+  position:fixed; right:20px; bottom:20px; z-index:200; max-width:340px;
+  display:flex; gap:12px; align-items:flex-start;
+  background:var(--paper-card); border:1px solid var(--rule); border-radius:var(--radius-lg);
+  box-shadow:var(--shadow-pop); padding:14px 16px;
+  opacity:0; transform:translateY(12px);
+  transition:opacity var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-out), bottom var(--dur-base) var(--ease-out);
+  pointer-events:none;
+}
+.floating-toast.show{ opacity:1; transform:translateY(0); pointer-events:auto; }
+.floating-toast.clickable .notice-body{ cursor:pointer; }
+@media (max-width:640px){
+  .floating-toast{ left:16px; right:16px; max-width:none; }
+}
+
+/* =====================================================================
    FEEDBACK — formulário do cliente e painel do admin.
    ===================================================================== */
 .star-rating{ display:flex; gap:4px; }

@@ -58,6 +58,15 @@ function check(label, cond) {
   await page.waitForTimeout(800);
   check('onboarding concluído (dashboard visível)', await page.locator('text=Saldo do mês').count() > 0);
 
+  // ---- Aviso minimalista de feedback (toast que aparece uma vez e some sozinho) ----
+  check('aviso de feedback aparece ao abrir o app', await page.locator('#feedback-toast', { hasText: 'Conheça nossa nova área de feedback' }).count() > 0);
+  await page.click('#feedback-toast .notice-close');
+  await page.waitForTimeout(350);
+  check('aviso de feedback some ao fechar', await page.locator('#feedback-toast').count() === 0);
+  await page.click('button:has-text("Visão Geral")');
+  await page.waitForTimeout(300);
+  check('aviso de feedback não reaparece depois de fechado', await page.locator('#feedback-toast').count() === 0);
+
   // ---- Cadastrar cartão Nubank (limite 2500, fecha 11, vence 18) ----
   await page.click('button:has-text("Cartões")');
   await page.waitForTimeout(300);
@@ -270,6 +279,10 @@ function check(label, cond) {
   await page.click('.feedback-banner button:has-text("Deixar feedback")');
   await page.waitForTimeout(400);
   check('botão do banner leva pra aba Feedback', await page.locator('#fb-message').count() > 0);
+  // Nota: o seletor "Você é" foi trocado pra Ana lá na seção de auditoria
+  // multiusuário (linha ~133) e nunca voltou pra Pedro — então o nome
+  // auto-preenchido aqui é o da pessoa ativa agora (Ana), não da conta.
+  check('campo Nome vem preenchido com a pessoa ativa no momento (Ana)', await page.locator('#fb-name').inputValue() === 'Ana');
 
   const fbMessage = 'Muito bom, só senti falta de exportar relatório em PDF.';
   await page.click('.star-btn[aria-label="Nota 4 de 5"]');
@@ -299,6 +312,24 @@ function check(label, cond) {
   check('expandir o item mostra a mensagem completa do feedback', adminFbExpanded.includes(fbMessage));
 
   await page.screenshot({ path: path.join(SCREEN_DIR, 'feedback-admin.png'), fullPage: true });
+
+  // ---- PWA: aviso de instalação (simula o beforeinstallprompt do navegador) ----
+  await page.evaluate(() => {
+    window.__pwaPromptCalled = false;
+    const evt = new Event('beforeinstallprompt', { cancelable: true });
+    evt.prompt = () => { window.__pwaPromptCalled = true; };
+    evt.userChoice = Promise.resolve({ outcome: 'accepted', platform: '' });
+    window.dispatchEvent(evt);
+  });
+  await page.waitForTimeout(400);
+  check('aviso de instalar o PWA aparece após o beforeinstallprompt', await page.locator('#pwa-toast', { hasText: 'Instale o Cofre' }).count() > 0);
+
+  await page.click('#pwa-toast button:has-text("Instalar")');
+  await page.waitForTimeout(400);
+  const pwaPromptCalled = await page.evaluate(() => window.__pwaPromptCalled);
+  check('botão "Instalar" aciona o prompt nativo do navegador', pwaPromptCalled === true);
+  check('aviso de instalar some depois de usado', await page.locator('#pwa-toast').count() === 0);
+
   await page.click('button:has-text("Cartões")');
   await page.waitForTimeout(400);
   await page.screenshot({ path: path.join(SCREEN_DIR, 'cartoes.png'), fullPage: true });

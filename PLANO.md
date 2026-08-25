@@ -443,3 +443,58 @@ seleção de estrelas funcionam; envio mostra a tela de confirmação; banner
 some depois de usado; painel admin lista nome+data sem expor a mensagem
 até o clique; clicar no item expande e mostra a mensagem completa. 35/35
 checks passando (27 anteriores + 8 novos).
+
+## 17. Nome automático no feedback, aviso de instalar como PWA, alerta minimalista
+
+Três melhorias sobre o módulo de feedback da seção 16, reaproveitando o que
+já existia (sessão/autenticação, PWA já configurado desde o início do
+projeto, e o próprio componente de card usado no banner da seção 16) em
+vez de criar mecanismos novos.
+
+**1. Nome automático no formulário de feedback.** O app não tem uso
+anônimo — toda tela fica atrás de login — então "identificar o usuário
+logado" aqui significa reaproveitar o dado que já é a fonte de verdade
+pra "quem está usando agora": o seletor "Você é" (`getActivePersonId`/
+`personName`, o mesmo que atribui a auditoria — seção 6), com o nome da
+conta (`SESSION.name`) como respaldo pra contas sem pessoas cadastradas.
+O campo `#fb-name` já chega preenchido, mas continua editável e opcional
+— digitar nele (`updateFeedbackNameDraft`) marca um "foi mexido" que
+sobrevive a re-renders da tela (mesma preocupação de não perder o que a
+pessoa já digitou que apareceu antes nas estrelas), e o valor volta a ser
+automático só depois de "Enviar outro feedback" (`resetFeedbackForm`).
+
+**2. Aviso de instalar como PWA.** O projeto já tinha manifest, ícones e
+service worker prontos desde o início (só faltava convidar a pessoa a
+usar) — nada disso mudou. O que foi adicionado: um listener de
+`beforeinstallprompt` registrado assim que o script carrega (antes até do
+login, pra não perder o evento se ele chegar cedo), guardando o evento
+pra disparar o prompt nativo do navegador sob demanda. Card no canto
+inferior direito ("Instale o Cofre no seu aparelho") com botão "Instalar"
+quando o navegador suporta o prompt nativo (Chrome/Edge/Android); no
+iOS/Safari, que não dispara esse evento, o botão vira "Como instalar" e
+abre as instruções manuais (Compartilhar → Adicionar à Tela de Início)
+usando o `alertDialog()` já existente (seção 14) em vez de um componente
+novo. Nunca aparece se o app já está rodando instalado (`display-mode:
+standalone`), e não volta a incomodar depois de instalado
+(`appinstalled`) ou dispensado (`localStorage`).
+
+**3. Alerta minimalista da área de feedback.** Volta a existir um toast de
+canto (o mesmo tipo de componente que tinha sido removido na seção 15 em
+favor do banner fixo) — mas agora convivendo com o banner, não no lugar
+dele: o toast é o "avisou, sumiu" (some sozinho em ~5s com fade, ou ao
+clicar no X, e nunca mais aparece depois de visto — chave própria em
+`localStorage`, independente da do banner), enquanto o banner da aba
+Cartões continua sendo o lembrete que fica até a pessoa interagir com
+ele. Os dois avisos (PWA e feedback) usam o mesmo componente genérico de
+toast flutuante (`pushFloatingToast`/`removeFloatingToast`, anexado direto
+no `<body>` como os modais — ver seção sobre modal stack — pra não ser
+apagado a cada `render()`), que empilha automaticamente quando os dois
+aparecem juntos, sem se sobrepor.
+
+**Testado:** nome do formulário vem preenchido com a pessoa ativa (testado
+tanto com conta "sozinho(a)" quanto com casal, inclusive depois de trocar
+quem está usando o app pelo seletor "Você é"); toast de feedback aparece
+ao abrir o app, some ao fechar e não reaparece depois; toast de instalação
+aparece ao simular o `beforeinstallprompt` do navegador, o botão
+"Instalar" aciona o `prompt()` nativo corretamente e o aviso some depois
+de usado. 42/42 checks passando (35 anteriores + 7 novos).
