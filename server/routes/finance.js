@@ -28,8 +28,11 @@ function isValidBundle(data) {
   return true;
 }
 
+// Cofre compartilhado: sempre lê/escreve pelo householdId, nunca pelo id
+// bruto do login — é isso que faz o titular e o(a) cônjuge (dois logins
+// diferentes) enxergarem exatamente o mesmo blob (ver server/db.js).
 router.get('/data', requireAuth, (req, res) => {
-  const row = db.prepare('SELECT data_json FROM user_data WHERE user_id = ?').get(req.user.id);
+  const row = db.prepare('SELECT data_json FROM user_data WHERE user_id = ?').get(req.user.householdId);
   if (!row) return res.json({ data: null });
   res.json({ data: JSON.parse(row.data_json) });
 });
@@ -46,7 +49,7 @@ router.put('/data', requireAuth, requireXhrHeader, (req, res) => {
   db.prepare(
     `INSERT INTO user_data (user_id, data_json, updated_at) VALUES (?, ?, datetime('now'))
      ON CONFLICT(user_id) DO UPDATE SET data_json = excluded.data_json, updated_at = datetime('now')`
-  ).run(req.user.id, serialized);
+  ).run(req.user.householdId, serialized);
   res.json({ ok: true });
 });
 

@@ -10,7 +10,11 @@ if (!JWT_SECRET || JWT_SECRET.length < 16) {
 
 function issueToken(res, user) {
   const token = jwt.sign(
-    { sub: user.id, email: user.email, role: user.role, name: user.name },
+    // householdId identifica QUAL cofre de dados esse login enxerga — pro
+    // titular é o próprio id, pro cônjuge é o id do titular (ver
+    // server/db.js e server/routes/auth.js). `sub`/`email`/`name` continuam
+    // sendo a identidade individual de QUEM está logado, usada na auditoria.
+    { sub: user.id, email: user.email, role: user.role, name: user.name, householdId: user.householdId },
     JWT_SECRET,
     { expiresIn: '7d' }
   );
@@ -32,7 +36,13 @@ function requireAuth(req, res, next) {
   if (!token) return res.status(401).json({ error: 'Não autenticado.' });
   try {
     const payload = jwt.verify(token, JWT_SECRET);
-    req.user = { id: payload.sub, email: payload.email, role: payload.role, name: payload.name };
+    // Fallback pra tokens emitidos antes do householdId existir — trata
+    // como titular do próprio cofre (era o único comportamento possível
+    // antes desta mudança), sem forçar ninguém a relogar.
+    req.user = {
+      id: payload.sub, email: payload.email, role: payload.role, name: payload.name,
+      householdId: payload.householdId || payload.sub
+    };
     next();
   } catch (e) {
     clearToken(res);

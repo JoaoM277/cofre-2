@@ -39,19 +39,25 @@ function check(label, cond) {
   await page.waitForTimeout(1200); // splash screen
 
   // ---- Registro ----
+  // Modo de uso (Solteiro/Casal) agora se escolhe aqui no registro, não
+  // mais no onboarding (Task 3 — Cofre Compartilhado, item 1) — o cônjuge
+  // fica em branco neste teste de propósito, pra continuar cobrindo o
+  // caminho "casal sem e-mail de cônjuge ainda" (adicionável depois em
+  // Configurações, coberto no script dedicado do cofre compartilhado).
   const registerTab = page.locator('text=Criar conta').first();
   if (await registerTab.count()) await registerTab.click();
   await page.fill('#auth-name', 'Pedro').catch(() => {});
   await page.fill('#auth-email', email);
   await page.fill('#auth-password', 'senha1234');
+  await page.click('#auth-mode-couple');
   const consent = page.locator('#auth-consent');
   if (await consent.count()) await consent.check();
   await page.click('#auth-submit-btn');
   await page.waitForTimeout(800);
   check('registro concluído (chegou no onboarding)', await page.locator('text=Bem-vindo').count() > 0);
 
-  // ---- Onboarding: casal Pedro/Ana ----
-  await page.click('text=Somos um casal');
+  // ---- Onboarding: só pede os nomes agora (modo já veio do registro) ----
+  check('onboarding não pergunta mais o modo de uso', await page.locator('text=Como você vai usar o app?').count() === 0);
   await page.fill('#ob-name1', 'Pedro');
   await page.fill('#ob-name2', 'Ana');
   await page.click('text=Começar a usar');
@@ -225,7 +231,15 @@ function check(label, cond) {
   check('auditoria mostra criação do cartão', auditText.includes('Nubank') && auditText.includes('cadastrou'));
   check('auditoria mostra criação da compra', auditText.includes('criou a compra'));
   check('auditoria mostra o diff exato da categoria (Alimentação → Casa)', /Categoria:\s*Alimenta[çc][ãa]o\s*[→>]+\s*Casa/i.test(auditText));
-  check('auditoria atribui a edição da categoria à Ana (multiusuário)', /Ana editou a compra/.test(auditText));
+  // Task 3 (Cofre Compartilhado): a auditoria passou a atribuir a ação a
+  // quem REALMENTE está logado (nome/e-mail da sessão JWT), não mais ao
+  // rótulo autoescolhido no seletor "Você é" — trocar pra Ana ali (linha
+  // ~147) não muda mais quem aparece aqui, já que só existe UM login real
+  // nesta conta (Pedro). É exatamente a limitação que o PLANO.md seção 6
+  // documentava como só resolvível com login individual por cônjuge — ver
+  // o script dedicado (check-shared-vault) pro cenário com dois logins de
+  // verdade, onde CADA ação é atribuída ao e-mail que realmente a fez.
+  check('auditoria atribui a edição ao login real (Pedro), não ao seletor "Você é"', /Pedro editou a compra/.test(auditText));
   check('auditoria mostra pagamento da fatura', auditText.includes('marcou a fatura') || auditText.includes('adiantou a fatura'));
 
   // ---- Compra à vista (1x) + cancelamento: confere liberação de limite ----

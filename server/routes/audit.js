@@ -44,8 +44,15 @@ router.post('/', requireXhrHeader, (req, res) => {
     if (changesJson.length > MAX_CHANGES_JSON) return res.status(400).json({ error: 'Alterações excedem o tamanho máximo.' });
   }
 
+  // actorPersonId continua vindo do cliente — é só o rótulo do seletor
+  // "Você é" (split financeiro por pessoa, ex. pro filtro desta própria
+  // tela), não uma alegação de identidade. Quem realmente fez a ação
+  // (nome e e-mail) vem SEMPRE do JWT validado, nunca do corpo da
+  // requisição — cofre compartilhado (item 4): dois logins reais agora
+  // deixam essa identidade criptograficamente confiável.
   const actorPersonId = b.actorPersonId != null ? String(b.actorPersonId).slice(0, 60) : null;
-  const actorPersonName = String(b.actorPersonName || req.user.name || '—').trim().slice(0, 120) || '—';
+  const actorPersonName = (req.user.name || '—').trim().slice(0, 120) || '—';
+  const actorEmail = req.user.email || null;
   const entityId = b.entityId != null ? String(b.entityId).slice(0, 60) : null;
   const cardId = b.cardId != null ? String(b.cardId).slice(0, 60) : null;
   const accountId = b.accountId != null ? String(b.accountId).slice(0, 60) : null;
@@ -53,11 +60,11 @@ router.post('/', requireXhrHeader, (req, res) => {
 
   db.prepare(`
     INSERT INTO audit_log
-      (user_id, actor_person_id, actor_person_name, action, module, entity_type, entity_id,
+      (user_id, actor_person_id, actor_person_name, actor_email, action, module, entity_type, entity_id,
        description, changes_json, card_id, account_id, category_id)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
-    req.user.id, actorPersonId, actorPersonName, action, module_, entityType, entityId,
+    req.user.householdId, actorPersonId, actorPersonName, actorEmail, action, module_, entityType, entityId,
     description, changesJson, cardId, accountId, categoryId
   );
 
@@ -72,7 +79,7 @@ router.get('/', (req, res) => {
   const offset = Math.max(0, Number(req.query.offset) || 0);
 
   const clauses = ['user_id = ?'];
-  const params = [req.user.id];
+  const params = [req.user.householdId];
 
   if (personId) { clauses.push('actor_person_id = ?'); params.push(String(personId)); }
   if (action && ACTIONS.has(action)) { clauses.push('action = ?'); params.push(action); }
@@ -82,6 +89,7 @@ router.get('/', (req, res) => {
 
   const rows = db.prepare(`
     SELECT id, actor_person_id AS actorPersonId, actor_person_name AS actorPersonName,
+           actor_email AS actorEmail,
            action, module, entity_type AS entityType, entity_id AS entityId,
            description, changes_json AS changesJson, card_id AS cardId,
            account_id AS accountId, category_id AS categoryId, created_at AS createdAt

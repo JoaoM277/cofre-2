@@ -594,6 +594,11 @@ let SAVE_ERROR = '';
 let IA_MESSAGES = [];
 let IA_LOADING = false;
 let AUTH_MODE = 'login';
+// Cofre compartilhado (item 1): esses três opcionais agora se decidem já
+// na criação da conta, não só depois no onboarding — ver renderAuthGate.
+let authRegisterMode = 'single';
+let authRegisterSpouseEmail = '';
+let authRegisterTithe = true;
 let AUTH_ERROR = '';
 let ADMIN_CLIENTS = [];
 let FEEDBACK_RATING = 0;
@@ -904,9 +909,13 @@ async function logAudit(action, module_, entityType, entityId, description, chan
   extra = extra || {};
   try{
     const personId = getActivePersonId();
+    // actorPersonId continua sendo o rótulo do seletor "Você é" (split
+    // financeiro, útil pro filtro por pessoa da própria tela de
+    // Auditoria). Quem realmente fez a ação (nome/e-mail) o servidor
+    // preenche sozinho a partir da sessão autenticada — não manda mais
+    // daqui, pra não sugerir que o cliente escolhe essa identidade.
     await api('/audit', {method:'POST', body:{
       actorPersonId: personId,
-      actorPersonName: personId ? personName(personId) : (SESSION && SESSION.name) || '—',
       action, module: module_, entityType,
       entityId: entityId!=null ? String(entityId) : null,
       description,
@@ -1272,6 +1281,24 @@ function renderAuthGate(){
         <div class="form-grid full"><div class="field"><label>E-mail</label><input id="auth-email" type="email" placeholder="voce@email.com"></div></div>
         <div class="form-grid full"><div class="field"><label>Senha</label><input id="auth-password" type="password" placeholder="${AUTH_MODE==='register'?'mínimo 8 caracteres':'sua senha'}"></div></div>
         ${AUTH_MODE==='register' ? `
+        <label style="margin-top:2px;">Como você vai usar o Cofre?</label>
+        <div class="mode-toggle">
+          <div class="mode-option ${authRegisterMode==='single'?'selected':''}" id="auth-mode-single" onclick="setAuthRegisterMode('single')">Sou solteiro(a)</div>
+          <div class="mode-option ${authRegisterMode==='couple'?'selected':''}" id="auth-mode-couple" onclick="setAuthRegisterMode('couple')">Somos um casal</div>
+        </div>
+        <div class="form-grid full" id="auth-spouse-wrap" style="${authRegisterMode==='single'?'display:none':''}">
+          <div class="field">
+            <label>E-mail do(a) cônjuge <span class="sub" style="font-weight:400;">(opcional agora — dá pra adicionar depois em Configurações)</span></label>
+            <input id="auth-spouse-email" type="email" placeholder="parceiro@email.com" value="${esc(authRegisterSpouseEmail)}" oninput="authRegisterSpouseEmail=this.value">
+          </div>
+          <div class="sub">Ele(a) vai poder entrar direto com a senha que você definir acima — dá pra trocar depois, cada um(a) com a própria.</div>
+        </div>
+        <label style="margin-top:4px;">Dízimo</label>
+        <div class="sub" style="margin-bottom:8px;">Cálculo automático de 10% sobre as entradas. Opcional — desligue se não fizer sentido pro seu uso (dá pra mudar depois em Configurações).</div>
+        <div class="mode-toggle">
+          <div class="mode-option ${authRegisterTithe?'selected':''}" id="auth-tithe-on" onclick="setAuthRegisterTithe(true)">Ativado</div>
+          <div class="mode-option ${!authRegisterTithe?'selected':''}" id="auth-tithe-off" onclick="setAuthRegisterTithe(false)">Desativado</div>
+        </div>
         <div class="consent-row">
           <input type="checkbox" id="auth-consent">
           <label for="auth-consent">Li e estou de acordo com os <a onclick="event.preventDefault(); openTermsModal()">Termos de Uso e a Política de Privacidade</a>, e entendo como o Cofre trata meus dados pessoais e financeiros conforme a LGPD.</label>
@@ -1284,6 +1311,21 @@ function renderAuthGate(){
   `;
 }
 function setAuthMode(m){ AUTH_MODE = m; AUTH_ERROR=''; renderAuthGate(); }
+// Nunca chama renderAuthGate() aqui — um full re-render apagaria nome/
+// e-mail/senha já digitados (mesma preocupação já documentada no checkbox
+// de consentimento, logo abaixo). Manipula o DOM direto, como
+// setSettingsMode já faz em Configurações.
+function setAuthRegisterMode(m){
+  authRegisterMode = m;
+  document.getElementById('auth-mode-single').classList.toggle('selected', m==='single');
+  document.getElementById('auth-mode-couple').classList.toggle('selected', m==='couple');
+  document.getElementById('auth-spouse-wrap').style.display = m==='single' ? 'none' : '';
+}
+function setAuthRegisterTithe(on){
+  authRegisterTithe = on;
+  document.getElementById('auth-tithe-on').classList.toggle('selected', on);
+  document.getElementById('auth-tithe-off').classList.toggle('selected', !on);
+}
 
 function openTermsModal(){
   openModal(`
@@ -1315,10 +1357,17 @@ async function submitRegister(){
   const name = val('auth-name');
   const email = val('auth-email');
   const password = val('auth-password');
+  const mode = authRegisterMode;
+  const spouseEmail = mode==='couple' ? val('auth-spouse-email').trim() : '';
   try{
-    const res = await api('/auth/register', {method:'POST', body:{name, email, password}});
+    const res = await api('/auth/register', {method:'POST', body:{name, email, password, mode, spouseEmail}});
     SESSION = res.user;
     DATA = migrateFinance(migrateCategories(DEFAULT_DATA()));
+    // O modo e o dízimo já foram decididos aqui no registro — o onboarding
+    // (a seguir) só precisa mais pedir nome(s), sem perguntar de novo.
+    onboardMode = mode;
+    pendingRegisterTithe = authRegisterTithe;
+    pendingSpouseEmailGiven = !!spouseEmail;
     TAB = 'dashboard';
     render();
   }catch(e){
@@ -1348,8 +1397,15 @@ async function logout(){
 }
 
 // ---------------- Onboarding (primeira vez de cada conta) ----------------
+// O modo (solteiro/casal) e o dízimo já foram decididos na tela de criar
+// conta (renderAuthGate/submitRegister) — aqui só falta coletar o(s)
+// nome(s) de exibição. Continua dando pra trocar tudo isso depois em
+// Configurações (renderSettingsModal), inclusive pra contas que não
+// passaram pelo registro normal (ex.: cliente cadastrado pelo admin).
 let onboardMode = 'single';
 let onboardNames = ['', ''];
+let pendingRegisterTithe = true;
+let pendingSpouseEmailGiven = false;
 function renderOnboarding(){
   onboardNames[0] = onboardNames[0] || (SESSION?.name || '');
   return `
@@ -1357,12 +1413,7 @@ function renderOnboarding(){
     <div class="brand" style="padding:0 0 18px;">${brandMarkSvg(26)}Cofre<span class="accent">.</span></div>
     <div class="card">
       <h3 style="margin-bottom:6px;">Bem-vindo(a), ${esc(SESSION.name)}!</h3>
-      <div class="sub" style="margin-bottom:18px;">Antes de começar, conte um pouco sobre como você vai usar o Cofre.</div>
-      <label>Como você vai usar o app?</label>
-      <div class="mode-toggle">
-        <div class="mode-option ${onboardMode==='single'?'selected':''}" onclick="setOnboardMode('single')">Sou solteiro(a)</div>
-        <div class="mode-option ${onboardMode==='couple'?'selected':''}" onclick="setOnboardMode('couple')">Somos um casal</div>
-      </div>
+      <div class="sub" style="margin-bottom:18px;">Antes de começar, só mais um detalhe.</div>
       <div class="form-grid full">
         <div class="field"><label>Seu nome</label><input id="ob-name1" value="${esc(onboardNames[0])}" oninput="onboardNames[0]=this.value"></div>
       </div>
@@ -1374,14 +1425,23 @@ function renderOnboarding(){
     </div>
   </div>`;
 }
-function setOnboardMode(m){ onboardMode = m; render(); }
 function finishOnboarding(){
   const name1 = (onboardNames[0]||'Você').trim() || 'Você';
   const name2 = (onboardNames[1]||'Parceiro(a)').trim() || 'Parceiro(a)';
   DATA.settings = {
     mode: onboardMode,
-    people: [{id:'p1', name:name1, color:'#3CAE8C'}, {id:'p2', name:name2, color:'#D4A24C'}]
+    people: [{id:'p1', name:name1, color:'#3CAE8C'}, {id:'p2', name:name2, color:'#D4A24C'}],
+    titheEnabled: pendingRegisterTithe
   };
+  // Sincroniza o nome de exibição do(a) cônjuge com o que acabou de ser
+  // digitado aqui — o login dele(a) já existe desde o registro (nasceu com
+  // o nome provisório "Cônjuge"). Fogo-e-esquece: se a rede falhar, o nome
+  // continua editável em Configurações a qualquer momento.
+  if(onboardMode==='couple' && pendingSpouseEmailGiven && SESSION.spouse){
+    api('/auth/spouse', {method:'POST', body:{email: SESSION.spouse.email, name: name2}})
+      .then(res=>{ SESSION.spouse = res.spouse; })
+      .catch(e=>console.error('Falha ao sincronizar nome do(a) cônjuge', e));
+  }
   persist();
 }
 
@@ -1405,10 +1465,21 @@ function renderSettingsModal(){
       <div class="mode-option ${titheOn?'selected':''}" id="set-tithe-on" onclick="setSettingsTithe(true)">Ativado</div>
       <div class="mode-option ${!titheOn?'selected':''}" id="set-tithe-off" onclick="setSettingsTithe(false)">Desativado</div>
     </div>
+    <div id="set-spouse-section" style="${s.mode==='single'?'display:none':''}">${renderSpouseSection()}</div>
     <div class="modal-actions">
       <button class="btn secondary" onclick="closeModal()">Cancelar</button>
       <button class="btn" onclick="saveSettings()">Salvar</button>
     </div>
+    <label style="margin-top:18px; display:block; border-top:1px solid var(--rule); padding-top:16px;">Segurança</label>
+    <div class="sub" style="margin-bottom:8px;">Altere sua própria senha de acesso — não afeta a senha de mais ninguém que use este cofre.</div>
+    <div class="form-grid full"><div class="field"><label>Senha atual</label><input type="password" id="set-current-password" autocomplete="current-password"></div></div>
+    <div class="form-grid">
+      <div class="field"><label>Nova senha</label><input type="password" id="set-new-password" autocomplete="new-password" placeholder="mínimo 8 caracteres"></div>
+      <div class="field"><label>Confirmar nova senha</label><input type="password" id="set-new-password-confirm" autocomplete="new-password"></div>
+    </div>
+    <div class="error-msg" id="set-password-error"></div>
+    <div class="sub" id="set-password-ok" style="color:var(--verdigris); margin-bottom:4px;"></div>
+    <button class="btn secondary" onclick="submitChangePassword()">Alterar senha</button>
   `);
 }
 function setSettingsMode(m){
@@ -1418,6 +1489,7 @@ function setSettingsMode(m){
   coupleBtn.classList.toggle('selected', m==='couple');
   singleBtn.closest('.modal').dataset.mode = m;
   document.getElementById('set-name2-wrap').style.display = m==='single' ? 'none' : '';
+  document.getElementById('set-spouse-section').style.display = m==='single' ? 'none' : '';
 }
 function setSettingsTithe(on){
   document.getElementById('set-tithe-on').classList.toggle('selected', on);
@@ -1433,6 +1505,85 @@ function saveSettings(){
   DATA.settings.titheEnabled = modalEl.dataset.titheEnabled != null ? modalEl.dataset.titheEnabled === '1' : titheEnabled();
   closeModal();
   persist();
+}
+
+// ---------------- Cofre compartilhado: gestão do(a) cônjuge em Configurações (item 3) ----------------
+// Só o titular (SESSION.isSpouse===false) vê os controles de verdade — pra
+// quem está logado(a) COMO o(a) cônjuge, mostra só um aviso: o servidor já
+// recusaria a chamada (requireHouseholdRoot), então nem oferece o botão.
+function renderSpouseSection(){
+  if(SESSION.isSpouse){
+    return `
+      <label style="margin-top:4px;">Cônjuge</label>
+      <div class="sub" style="margin-bottom:8px;">O acesso compartilhado é gerenciado pela conta principal${SESSION.householdRootEmail?` (${esc(SESSION.householdRootEmail)})`:''}.</div>
+    `;
+  }
+  const sp = SESSION.spouse;
+  return `
+    <label style="margin-top:4px;">Cônjuge</label>
+    <div class="sub" style="margin-bottom:8px;">${sp
+      ? `${esc(sp.name)} já acessa este cofre com o próprio login (${esc(sp.email)}).`
+      : 'Cadastre o e-mail do(a) cônjuge pra ele(a) acessar este mesmo cofre com o próprio login — a senha inicial é a mesma que você definiu, e dá pra trocar depois, cada um(a) com a sua.'}</div>
+    <div class="form-grid">
+      <div class="field"><label>E-mail do(a) cônjuge</label><input id="set-spouse-email" type="email" value="${esc(sp?sp.email:'')}" placeholder="parceiro@email.com"></div>
+      <div class="field"><label>Nome do(a) cônjuge</label><input id="set-spouse-name" value="${esc(sp?sp.name:'')}" placeholder="Como ele(a) quer ser chamado(a)"></div>
+    </div>
+    <div class="error-msg" id="set-spouse-error"></div>
+    <div style="display:flex; gap:8px; margin:0 0 16px;">
+      <button type="button" class="btn secondary small" onclick="saveSpouse()">${sp?'Salvar':'Convidar cônjuge'}</button>
+      ${sp?'<button type="button" class="btn danger" onclick="confirmRemoveSpouse()">Remover acesso</button>':''}
+    </div>
+  `;
+}
+async function saveSpouse(){
+  const errEl = document.getElementById('set-spouse-error');
+  if(errEl) errEl.textContent = '';
+  const email = val('set-spouse-email').trim();
+  const name = val('set-spouse-name').trim();
+  if(!email){ if(errEl) errEl.textContent = 'Informe o e-mail do(a) cônjuge.'; return; }
+  try{
+    const res = await api('/auth/spouse', {method:'POST', body:{email, name}});
+    SESSION.spouse = res.spouse;
+    renderSettingsModal();
+  }catch(e){
+    if(errEl) errEl.textContent = e.message || 'Não foi possível salvar.';
+  }
+}
+function confirmRemoveSpouse(){
+  const name = SESSION.spouse ? SESSION.spouse.name : 'cônjuge';
+  confirmDialog(`Remover o acesso de ${name}? O login dele(a) para de funcionar, mas todos os dados financeiros continuam intactos com você.`, async ()=>{
+    try{
+      await api('/auth/spouse', {method:'DELETE'});
+      SESSION.spouse = null;
+      renderSettingsModal();
+    }catch(e){
+      alertDialog(e.message || 'Não foi possível remover o acesso.');
+    }
+  }, {title:'Remover acesso do(a) cônjuge', confirmLabel:'Remover', danger:true});
+}
+
+// ---------------- Alterar senha (item 3) ----------------
+// Sempre a própria senha, seja titular ou cônjuge — ver PLANO da task
+// (independência de senha depois do bootstrap inicial).
+async function submitChangePassword(){
+  const errEl = document.getElementById('set-password-error');
+  const okEl = document.getElementById('set-password-ok');
+  if(errEl) errEl.textContent = '';
+  if(okEl) okEl.textContent = '';
+  const currentPassword = val('set-current-password');
+  const newPassword = val('set-new-password');
+  const confirmPassword = val('set-new-password-confirm');
+  if(newPassword !== confirmPassword){
+    if(errEl) errEl.textContent = 'A confirmação não é igual à nova senha.';
+    return;
+  }
+  try{
+    await api('/auth/change-password', {method:'POST', body:{currentPassword, newPassword}});
+    ['set-current-password','set-new-password','set-new-password-confirm'].forEach(id=>{ const el = document.getElementById(id); if(el) el.value=''; });
+    if(okEl) okEl.textContent = 'Senha alterada com sucesso.';
+  }catch(e){
+    if(errEl) errEl.textContent = e.message || 'Não foi possível alterar a senha.';
+  }
 }
 
 // ---------------- Dízimo (opcional) ----------------
@@ -3123,7 +3274,7 @@ function renderAuditEvent(ev){
         <span class="item-tag audit-tag-${ev.action}">${AUDIT_ACTION_LABELS[ev.action]||ev.action}</span>
         <div>
           <div class="item-desc"><strong>${esc(ev.actorPersonName)}</strong> ${esc(ev.description)}</div>
-          <div class="item-meta">${AUDIT_MODULE_LABELS[ev.module]||ev.module} · ${when}</div>
+          <div class="item-meta">${ev.actorEmail?`${esc(ev.actorEmail)} · `:''}${AUDIT_MODULE_LABELS[ev.module]||ev.module} · ${when}</div>
           ${ev.changes && ev.changes.length ? `
           <div class="audit-diff">
             ${ev.changes.map(c=>`<span class="audit-diff-chip">${esc(c.field)}: ${esc(c.from)} → ${esc(c.to)}</span>`).join('')}
@@ -3371,8 +3522,8 @@ function renderAdmin(){
         <div class="item-row">
           <div class="item-left">
             <div>
-              <div class="item-desc">${esc(c.name)} ${c.role==='admin'?'<span class="role-badge">admin</span>':''}</div>
-              <div class="item-meta">${esc(c.email)} · criado em ${new Date(c.created_at).toLocaleDateString('pt-BR')}</div>
+              <div class="item-desc">${esc(c.name)} ${c.role==='admin'?'<span class="role-badge">admin</span>':''} ${c.householdRootEmail?'<span class="role-badge" style="background:var(--verdigris-tint); color:var(--verdigris);">cônjuge</span>':''}</div>
+              <div class="item-meta">${esc(c.email)} · criado em ${new Date(c.created_at).toLocaleDateString('pt-BR')} ${c.householdRootEmail?`· cofre compartilhado com ${esc(c.householdRootEmail)}`:''}</div>
             </div>
           </div>
           ${c.id!==SESSION.id ? `<button class="btn danger" onclick="adminDeleteClient(${c.id})">Remover</button>` : `<span class="item-meta">você</span>`}

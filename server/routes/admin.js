@@ -10,9 +10,16 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MIN_PASSWORD_LEN = 8;
 
 router.get('/clients', (req, res) => {
-  const rows = db.prepare(
-    'SELECT id, email, name, role, created_at FROM users ORDER BY created_at ASC'
-  ).all();
+  // householdRootEmail só vem preenchido pra linhas de cônjuge (ver
+  // server/db.js) — dá pro admin enxergar que duas linhas são, na
+  // verdade, um único cofre compartilhado por dois logins.
+  const rows = db.prepare(`
+    SELECT u.id, u.email, u.name, u.role, u.created_at,
+           root.email AS householdRootEmail
+    FROM users u
+    LEFT JOIN users root ON root.id = u.household_id
+    ORDER BY u.created_at ASC
+  `).all();
   res.json({ clients: rows });
 });
 

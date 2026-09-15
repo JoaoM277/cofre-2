@@ -12,7 +12,9 @@ const aiLimiter = rateLimit({
   limit: 20,
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req) => String(req.user?.id || req.ip),
+  // Cota compartilhada pelo household (titular + cônjuge somam no mesmo
+  // limite) — é uma família usando um orçamento de IA, não dois separados.
+  keyGenerator: (req) => String(req.user?.householdId || req.user?.id || req.ip),
   message: { error: 'Muitas perguntas em pouco tempo. Aguarde alguns minutos.' }
 });
 
@@ -74,7 +76,7 @@ router.post('/ask', aiLimiter, requireXhrHeader, async (req, res) => {
     return res.status(503).json({ error: 'A Conselheira IA não está configurada neste servidor (falta ANTHROPIC_API_KEY no .env).' });
   }
 
-  const row = db.prepare('SELECT data_json FROM user_data WHERE user_id = ?').get(req.user.id);
+  const row = db.prepare('SELECT data_json FROM user_data WHERE user_id = ?').get(req.user.householdId);
   const data = row ? JSON.parse(row.data_json) : {};
   const summary = buildSummary(data, monthKey);
 

@@ -100,4 +100,29 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_feedback_created ON feedback(created_at DESC);
 `);
 
+// -----------------------------------------------------------------------
+// Migrações idempotentes (SQLite não tem "ADD COLUMN IF NOT EXISTS") — só
+// roda a alteração se a coluna ainda não existir, então é seguro chamar
+// isso toda vez que o servidor sobe, tanto num banco novo (criado agora
+// pelas tabelas acima, já sem a coluna) quanto no data/cofre.db real de
+// produção, já com dados.
+// -----------------------------------------------------------------------
+function ensureColumn(table, column, ddl) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all();
+  if (!cols.some(c => c.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
+}
+
+// Cofre compartilhado: `household_id` liga o login do cônjuge ao do
+// titular sem precisar de uma tabela `households` própria — o titular é
+// household_id IS NULL (seu "household" é o próprio id); o cônjuge tem
+// household_id apontando pro titular. `user_data`/`audit_log.user_id`
+// passam a ser lidos/gravados por household_id (ver server/routes/*.js),
+// nunca pelo id bruto do login — é isso que faz os dois logins
+// enxergarem o mesmo cofre.
+ensureColumn('users', 'household_id', 'household_id INTEGER REFERENCES users(id) ON DELETE CASCADE');
+
+// Auditoria passa a registrar o e-mail de quem realmente estava logado
+// (além do nome, que já existia) — ver server/routes/audit.js.
+ensureColumn('audit_log', 'actor_email', 'actor_email TEXT');
+
 module.exports = db;
