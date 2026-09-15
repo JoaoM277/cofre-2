@@ -181,6 +181,31 @@ section{margin-bottom:32px;}
 .tip-text{font-size:13px; color:var(--ink); line-height:1.5;}
 
 /* =====================================================================
+   ABA TUTORIAL — texto de destaque (mesma lógica visual do tip-card, tom
+   latão em vez de verde pra ler como "fato importante do sistema", não
+   como dica) + tópicos expansíveis nativos (<details>), sem JS.
+   ===================================================================== */
+.callout-highlight{
+  background:linear-gradient(135deg, var(--brass-tint) 0%, var(--paper-card) 70%);
+  border:1px solid #E6D3A8; border-left:3px solid var(--brass);
+  border-radius:var(--radius); padding:16px 18px; margin-bottom:24px;
+  font-size:13.5px; color:var(--ink); line-height:1.6;
+}
+.callout-highlight strong{display:block; margin-bottom:4px; font-family:'Newsreader',serif; font-size:16px; font-weight:600;}
+.tutorial-topics{display:flex; flex-direction:column; gap:8px;}
+.tutorial-topic{background:var(--paper-card); border:1px solid var(--rule); border-radius:var(--radius-lg); overflow:hidden;}
+.tutorial-topic summary{
+  list-style:none; cursor:pointer; padding:14px 18px; font-weight:600; font-size:14px;
+  display:flex; align-items:center; justify-content:space-between; gap:10px;
+  transition:background var(--dur-fast) var(--ease-out);
+}
+.tutorial-topic summary::-webkit-details-marker{display:none;}
+.tutorial-topic summary:hover{background:var(--paper-sunken);}
+.tutorial-topic summary svg{flex-shrink:0; color:var(--ink-soft); transition:transform var(--dur-fast) var(--ease-out);}
+.tutorial-topic[open] summary svg{transform:rotate(180deg);}
+.tutorial-body{padding:0 18px 16px; font-size:13px; color:var(--ink-soft); line-height:1.6; border-top:1px solid var(--rule); padding-top:12px;}
+
+/* =====================================================================
    GAUGE — mostrador de latão (semicírculo) que resume a saúde
    financeira do mês num relance, como o mostrador de um cofre.
    ===================================================================== */

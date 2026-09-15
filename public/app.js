@@ -193,7 +193,8 @@ const ICON_PATHS = {
   star: '<path d="M12 3.5 14.6 9l6 .9-4.3 4.3 1 6.1L12 17.3l-5.3 2.9 1-6L3.4 9.9l6-.9L12 3.5Z"/>',
   message: '<path d="M4 5.5A2.3 2.3 0 0 1 6.3 3.2h11.4A2.3 2.3 0 0 1 20 5.5v8A2.3 2.3 0 0 1 17.7 15.8H10l-4.5 4v-4H6.3A2.3 2.3 0 0 1 4 13.5v-8Z"/>',
   chevronDown: '<path d="M5 8.5 12 15l7-6.5"/>',
-  download: '<path d="M12 3.5v11"/><path d="M7.5 10 12 14.5 16.5 10"/><path d="M4.5 17.5v2A2 2 0 0 0 6.5 21.5h11a2 2 0 0 0 2-2v-2"/>'
+  download: '<path d="M12 3.5v11"/><path d="M7.5 10 12 14.5 16.5 10"/><path d="M4.5 17.5v2A2 2 0 0 0 6.5 21.5h11a2 2 0 0 0 2-2v-2"/>',
+  book: '<path d="M12 6.3c-1.8-1.5-4.3-2.1-7-1.8v12.8c2.7-.3 5.2.3 7 1.8 1.8-1.5 4.3-2.1 7-1.8V4.5c-2.7-.3-5.2.3-7 1.8Z"/><path d="M12 6.3v12.8"/>'
 };
 function icon(name, size){
   const s = size || 18;
@@ -393,6 +394,14 @@ function nextTutorialStep(){
   showTutorialStep();
 }
 function skipTutorial(){ finishTutorial(); }
+// Disparo manual (aba Tutorial) — ignora de propósito o flag de "já visto"
+// em localStorage: aqui é a pessoa pedindo pra rever, não o gatilho
+// automático de primeiro contato.
+function startTutorialManually(){
+  TUTORIAL_ACTIVE = true;
+  TUTORIAL_STEP = 0;
+  showTutorialStep();
+}
 function finishTutorial(){
   TUTORIAL_ACTIVE = false;
   try{ localStorage.setItem(TUTORIAL_KEY, '1'); }catch(e){}
@@ -402,6 +411,46 @@ function finishTutorial(){
   // maybeShowPwaInstallToast recuam enquanto TUTORIAL_ACTIVE é true) — sem
   // isso eles só apareceriam na próxima navegação manual da pessoa.
   render();
+}
+
+// ---------------- Aba Tutorial (referência estática, sob demanda) ----------------
+// Diferente do tour guiado (que empurra a pessoa pelo fluxo na primeira
+// vez), esta aba é uma consulta: fica sempre disponível no menu pra quando
+// alguém esquecer como algo funciona, sem precisar refazer o tour do zero.
+// <details>/<summary> nativos fazem o "lista expansível" sem JS nenhum —
+// direto ao ponto, como pedido.
+const TUTORIAL_TOPICS = [
+  { title: 'Visão Geral', body: 'Mostra o saldo do mês, entradas, saídas, dízimo pendente, o mapa de gastos por categoria e o andamento dos orçamentos — tudo calculado sozinho a partir do que foi lançado nas outras abas. É o primeiro lugar pra checar como o mês está indo.' },
+  { title: 'Entradas & Saídas', body: 'Registre toda movimentação de dinheiro assim que ela acontecer: um salário recebido, uma conta paga, uma compra no débito ou em dinheiro. Cada lançamento pede tipo (entrada ou saída), categoria, data, valor e, pra saídas, a forma de pagamento. Categorizar com consistência é o que faz os orçamentos por categoria funcionarem de verdade.' },
+  { title: 'Cartões & Faturas', body: 'Cadastre cada cartão com limite, dia de fechamento e de vencimento. A fatura nunca é digitada — ela é sempre calculada automaticamente a partir das compras lançadas em Entradas & Saídas com forma de pagamento Cartão. Uma compra parcelada distribui as parcelas nas faturas seguintes sozinha.' },
+  { title: 'Parcelas', body: 'Reúne todo compromisso futuro já assumido no crédito, pra você enxergar de uma vez quanto já está comprometido nos próximos meses antes de fechar uma compra nova.' },
+  { title: 'Orçamentos', body: 'Defina um teto de gasto por categoria antes do mês começar. O Cofre compara automaticamente o que foi gasto — incluindo compras no cartão ainda não pagas — contra esse teto e avisa quando ele estoura.' },
+  { title: 'Caixinhas', body: 'Reservas com nome e valor-alvo definidos: uma viagem, uma emergência, um presente. Separe valores nelas aos poucos; o Cofre acompanha o quanto falta pra bater a meta.' },
+  { title: 'Dízimo', body: 'A cada entrada registrada, o Cofre calcula 10% automaticamente. Quem marca como pago é você, mês a mês — é um lembrete e um cálculo, não um débito automático.' },
+  { title: 'Lembretes', body: 'Cadastre vencimentos (contas, assinaturas, boletos) pra não depender da memória. Eles aparecem organizados por data de vencimento.' },
+  { title: 'Auditoria', body: 'Todo lançamento, edição e pagamento fica registrado aqui — quem fez, o quê e quando — de forma permanente, sem edição ou exclusão possível. Útil especialmente quando duas pessoas usam a mesma conta.' },
+  { title: 'Conselheira IA', body: 'Um assistente que responde perguntas usando os seus números reais do mês. Quanto mais completo o registro de entradas e saídas, mais útil a resposta.' },
+  { title: 'Feedback', body: 'Encontrou algo que podia melhorar ou quer sugerir uma ideia? A aba Feedback está sempre aberta — sua opinião é lida e ajuda a priorizar o que vem a seguir.' },
+];
+function renderTutorialPage(){
+  return `
+    <div class="section-head">
+      <div><h2>Como o Cofre funciona</h2><div class="sub">Consulte aqui sempre que tiver dúvida sobre alguma parte do app.</div></div>
+      <button class="btn secondary" onclick="startTutorialManually()">${icon('sparkles',15)} Rever tutorial guiado</button>
+    </div>
+    <div class="callout-highlight">
+      <strong>O sistema funciona de forma manual: todos os dados são colocados pelos próprios usuários.</strong>
+      Não existe integração automática com banco ou cartão — cada entrada, saída, compra ou pagamento só aparece aqui quando alguém registra. Quanto mais completo o registro, mais útil o Cofre fica.
+    </div>
+    <div class="tutorial-topics">
+      ${TUTORIAL_TOPICS.map(t => `
+        <details class="tutorial-topic">
+          <summary><span>${esc(t.title)}</span>${icon('chevronDown',16)}</summary>
+          <div class="tutorial-body">${esc(t.body)}</div>
+        </details>
+      `).join('')}
+    </div>
+  `;
 }
 
 // ---------------- Splash screen ----------------
@@ -1386,6 +1435,7 @@ function getNav(){
     {id:'lembretes', label:'Lembretes', icon:'bell'},
     {id:'auditoria', label:'Auditoria', icon:'history'},
     {id:'ia', label:'Conselheira IA', icon:'sparkles'},
+    {id:'tutorial', label:'Tutorial', icon:'book'},
     {id:'feedback', label:'Feedback', icon:'star'},
   ];
   if(SESSION && SESSION.role==='admin'){
@@ -1468,6 +1518,7 @@ function render(){
   else if(TAB==='lembretes') content.innerHTML = renderLembretes();
   else if(TAB==='auditoria'){ content.innerHTML = '<div class="empty">Carregando...</div>'; loadAndRenderAudit(); }
   else if(TAB==='ia') content.innerHTML = renderConselheira();
+  else if(TAB==='tutorial') content.innerHTML = renderTutorialPage();
   else if(TAB==='feedback') content.innerHTML = renderFeedbackForm();
   else if(TAB==='feedbacks-admin'){ content.innerHTML = '<div class="empty">Carregando...</div>'; loadAndRenderFeedbackAdmin(); }
   else if(TAB==='admin'){ content.innerHTML = '<div class="empty">Carregando...</div>'; loadAndRenderAdmin(); }
