@@ -560,6 +560,18 @@ input:focus, select:focus, textarea:focus{outline:none; border-color:var(--brass
   .notice-close{ order:3; margin-left:auto; }
 }
 
+/* Modal "Novidades" — uma feature por linha (ícone + texto + ação),
+   reaproveitando .notice-icon/.notice-body/.notice-title/.notice-text
+   acima, separadas por um traço fino em vez de virar cartões isolados. */
+.feature-item{ display:flex; gap:12px; align-items:center; padding:14px 0; border-bottom:1px solid var(--rule); }
+.feature-item:last-child{ border-bottom:none; padding-bottom:6px; }
+.feature-item .btn{ flex-shrink:0; }
+@media (max-width:480px){
+  .feature-item{ flex-wrap:wrap; }
+  .feature-item .notice-body{ order:1; flex-basis:calc(100% - 46px); }
+  .feature-item .btn{ order:2; margin-left:46px; }
+}
+
 /* =====================================================================
    TOASTS FLUTUANTES — componente genérico no canto da tela, reaproveitado
    pelo aviso de instalar o PWA e pelo aviso minimalista de feedback (ambos

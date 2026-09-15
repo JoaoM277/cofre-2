@@ -195,7 +195,8 @@ const ICON_PATHS = {
   chevronDown: '<path d="M5 8.5 12 15l7-6.5"/>',
   download: '<path d="M12 3.5v11"/><path d="M7.5 10 12 14.5 16.5 10"/><path d="M4.5 17.5v2A2 2 0 0 0 6.5 21.5h11a2 2 0 0 0 2-2v-2"/>',
   book: '<path d="M12 6.3c-1.8-1.5-4.3-2.1-7-1.8v12.8c2.7-.3 5.2.3 7 1.8 1.8-1.5 4.3-2.1 7-1.8V4.5c-2.7-.3-5.2.3-7 1.8Z"/><path d="M12 6.3v12.8"/>',
-  repeat: '<path d="M4 7.5h11.5a3.5 3.5 0 0 1 3.5 3.5v1"/><path d="M7.5 4 4 7.5 7.5 11"/><path d="M20 16.5H8.5A3.5 3.5 0 0 1 5 13v-1"/><path d="M16.5 20 20 16.5 16.5 13"/>'
+  repeat: '<path d="M4 7.5h11.5a3.5 3.5 0 0 1 3.5 3.5v1"/><path d="M7.5 4 4 7.5 7.5 11"/><path d="M20 16.5H8.5A3.5 3.5 0 0 1 5 13v-1"/><path d="M16.5 20 20 16.5 16.5 13"/>',
+  users: '<circle cx="8.5" cy="8" r="3"/><path d="M2.5 19.5a6 6 0 0 1 12 0"/><circle cx="16.5" cy="8.7" r="2.4"/><path d="M15.2 12.5a5 5 0 0 1 6.3 4.8"/>'
 };
 function icon(name, size){
   const s = size || 18;
@@ -412,6 +413,64 @@ function finishTutorial(){
   // maybeShowPwaInstallToast recuam enquanto TUTORIAL_ACTIVE é true) — sem
   // isso eles só apareceriam na próxima navegação manual da pessoa.
   render();
+}
+
+// ---------------- Modal "Novidades" (avisa sobre features novas do sprint) ----------------
+// Só faz sentido pra quem já usava o Cofre antes desta leva de features —
+// quem está vendo o tour de primeiro contato agora (maybeStartTutorial)
+// já está conhecendo o app pela primeira vez, então não precisa também
+// deste aviso. TUTORIAL_ALREADY_SEEN_AT_LOAD captura isso uma única vez,
+// no carregamento da página — antes de qualquer tour rodar e marcar
+// TUTORIAL_KEY como visto — pra diferenciar "conta antiga" de "acabou de
+// se cadastrar" mesmo depois que o tour da conta nova terminar.
+const NEW_FEATURES_KEY = 'cofre_novidades_2026_09_seen_v1';
+let NEW_FEATURES_SHOWN_THIS_SESSION = false;
+let TUTORIAL_ALREADY_SEEN_AT_LOAD = false;
+try{ TUTORIAL_ALREADY_SEEN_AT_LOAD = localStorage.getItem(TUTORIAL_KEY) === '1'; }catch(e){}
+const NEW_FEATURES = [
+  { icon: 'book', title: 'Tutorial guiado', text: 'Um tour rápido mostra o fluxo inteiro do app pra quem está chegando agora — e fica disponível na aba Tutorial pra rever quando quiser.', actionLabel: 'Ver tutorial', target: 'tutorial' },
+  { icon: 'heart', title: 'Dízimo agora é opcional', text: 'Quem não usa dízimo pode desligar o cálculo automático nas Configurações — a aba some sozinha do menu.', actionLabel: 'Configurações', target: 'settings' },
+  { icon: 'users', title: 'Cofre Compartilhado', text: 'Duas pessoas, um cofre só: convide seu parceiro(a) pra entrar com o próprio login e ver as mesmas finanças, gerenciado nas Configurações.', actionLabel: 'Configurações', target: 'settings' },
+  { icon: 'repeat', title: 'Dívidas Fixas', text: 'Nova aba pra cadastrar uma vez uma saída recorrente — aluguel, financiamento, internet — e só marcar como paga a cada mês.', actionLabel: 'Ver Dívidas Fixas', target: 'dividas' },
+];
+function newFeatureItemHtml(f){
+  return `
+    <div class="feature-item">
+      <div class="notice-icon">${icon(f.icon, 17)}</div>
+      <div class="notice-body">
+        <div class="notice-title">${esc(f.title)}</div>
+        <div class="notice-text">${esc(f.text)}</div>
+      </div>
+      <button class="btn secondary small" onclick="goToNewFeature('${f.target}')">${esc(f.actionLabel)}</button>
+    </div>
+  `;
+}
+function maybeShowNewFeaturesModal(){
+  if(TUTORIAL_ACTIVE) return; // quem está no tour de primeiro contato vê tudo isso lá
+  if(!TUTORIAL_ALREADY_SEEN_AT_LOAD) return; // conta nova — não precisa deste aviso extra
+  if(NEW_FEATURES_SHOWN_THIS_SESSION) return;
+  if(document.getElementById('active-modal')) return; // não interrompe um modal já aberto
+  let seen = false;
+  try{ seen = localStorage.getItem(NEW_FEATURES_KEY) === '1'; }catch(e){}
+  if(seen) return;
+  NEW_FEATURES_SHOWN_THIS_SESSION = true;
+  openModal(`
+    <h3>Novidades no Cofre</h3>
+    <div class="sub" style="margin-bottom:14px;">Chegaram 4 novidades por aqui — dá uma olhada:</div>
+    ${NEW_FEATURES.map(newFeatureItemHtml).join('')}
+    <div class="modal-actions">
+      <button class="btn" onclick="dismissNewFeaturesModal()">Entendi</button>
+    </div>
+  `);
+}
+function dismissNewFeaturesModal(){
+  try{ localStorage.setItem(NEW_FEATURES_KEY, '1'); }catch(e){}
+  closeModal();
+}
+function goToNewFeature(target){
+  dismissNewFeaturesModal();
+  if(target === 'settings') renderSettingsModal();
+  else switchTab(target);
 }
 
 // ---------------- Aba Tutorial (referência estática, sob demanda) ----------------
@@ -1717,6 +1776,7 @@ function render(){
   else if(TAB==='admin'){ content.innerHTML = '<div class="empty">Carregando...</div>'; loadAndRenderAdmin(); }
 
   maybeStartTutorial();
+  maybeShowNewFeaturesModal();
   maybeShowFeedbackToast();
   maybeShowPwaInstallToast();
 }
