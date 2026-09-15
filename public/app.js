@@ -426,7 +426,7 @@ const TUTORIAL_TOPICS = [
   { title: 'Parcelas', body: 'Reúne todo compromisso futuro já assumido no crédito, pra você enxergar de uma vez quanto já está comprometido nos próximos meses antes de fechar uma compra nova.' },
   { title: 'Orçamentos', body: 'Defina um teto de gasto por categoria antes do mês começar. O Cofre compara automaticamente o que foi gasto — incluindo compras no cartão ainda não pagas — contra esse teto e avisa quando ele estoura.' },
   { title: 'Caixinhas', body: 'Reservas com nome e valor-alvo definidos: uma viagem, uma emergência, um presente. Separe valores nelas aos poucos; o Cofre acompanha o quanto falta pra bater a meta.' },
-  { title: 'Dízimo', body: 'A cada entrada registrada, o Cofre calcula 10% automaticamente. Quem marca como pago é você, mês a mês — é um lembrete e um cálculo, não um débito automático.' },
+  { title: 'Dízimo', body: 'A cada entrada registrada, o Cofre calcula 10% automaticamente. Quem marca como pago é você, mês a mês — é um lembrete e um cálculo, não um débito automático. É opcional: dá pra desligar em Configurações se não fizer sentido pro seu uso, e a aba some do menu.' },
   { title: 'Lembretes', body: 'Cadastre vencimentos (contas, assinaturas, boletos) pra não depender da memória. Eles aparecem organizados por data de vencimento.' },
   { title: 'Auditoria', body: 'Todo lançamento, edição e pagamento fica registrado aqui — quem fez, o quê e quando — de forma permanente, sem edição ou exclusão possível. Útil especialmente quando duas pessoas usam a mesma conta.' },
   { title: 'Conselheira IA', body: 'Um assistente que responde perguntas usando os seus números reais do mês. Quanto mais completo o registro de entradas e saídas, mais útil a resposta.' },
@@ -1387,6 +1387,7 @@ function finishOnboarding(){
 
 function renderSettingsModal(){
   const s = DATA.settings;
+  const titheOn = titheEnabled();
   openModal(`
     <h3>Configurações</h3>
     <label>Modo de uso</label>
@@ -1397,6 +1398,12 @@ function renderSettingsModal(){
     <div class="form-grid full"><div class="field"><label>Seu nome</label><input id="set-name1" value="${esc(s.people[0].name)}"></div></div>
     <div class="form-grid full" id="set-name2-wrap" style="${s.mode==='single'?'display:none':''}">
       <div class="field"><label>Nome do(a) parceiro(a)</label><input id="set-name2" value="${esc(s.people[1].name)}"></div>
+    </div>
+    <label style="margin-top:4px;">Dízimo</label>
+    <div class="sub" style="margin-bottom:8px;">Cálculo automático de 10% sobre as entradas. Opcional — desligue se não fizer sentido pro seu uso.</div>
+    <div class="mode-toggle">
+      <div class="mode-option ${titheOn?'selected':''}" id="set-tithe-on" onclick="setSettingsTithe(true)">Ativado</div>
+      <div class="mode-option ${!titheOn?'selected':''}" id="set-tithe-off" onclick="setSettingsTithe(false)">Desativado</div>
     </div>
     <div class="modal-actions">
       <button class="btn secondary" onclick="closeModal()">Cancelar</button>
@@ -1412,15 +1419,30 @@ function setSettingsMode(m){
   singleBtn.closest('.modal').dataset.mode = m;
   document.getElementById('set-name2-wrap').style.display = m==='single' ? 'none' : '';
 }
+function setSettingsTithe(on){
+  document.getElementById('set-tithe-on').classList.toggle('selected', on);
+  document.getElementById('set-tithe-off').classList.toggle('selected', !on);
+  document.getElementById('set-tithe-on').closest('.modal').dataset.titheEnabled = on ? '1' : '0';
+}
 function saveSettings(){
   const modalEl = document.getElementById('set-mode-single').closest('.modal');
   const mode = modalEl.dataset.mode || DATA.settings.mode;
   DATA.settings.mode = mode;
   DATA.settings.people[0].name = val('set-name1').trim() || DATA.settings.people[0].name;
   if(mode==='couple') DATA.settings.people[1].name = val('set-name2').trim() || DATA.settings.people[1].name;
+  DATA.settings.titheEnabled = modalEl.dataset.titheEnabled != null ? modalEl.dataset.titheEnabled === '1' : titheEnabled();
   closeModal();
   persist();
 }
+
+// ---------------- Dízimo (opcional) ----------------
+// O público do Cofre não é só de cristãos, então o cálculo automático de
+// dízimo pode ser desligado inteiro nas Configurações. `titheEnabled` só
+// existe explicitamente como `false` pra quem desligou; contas antigas
+// (sem esse campo ainda) e novas continuam com o padrão ligado — sem essa
+// checagem "!== false" (em vez de checar truthy), todo mundo que já usava
+// dízimo veria a aba sumir sozinha na primeira carga depois desta mudança.
+function titheEnabled(){ return DATA?.settings?.titheEnabled !== false; }
 
 // ---------------- Nav ----------------
 function getNav(){
@@ -1431,13 +1453,15 @@ function getNav(){
     {id:'parcelas', label:'Parcelas', icon:'layers'},
     {id:'cartao', label:'Cartões', icon:'card'},
     {id:'caixinhas', label:'Caixinhas', icon:'jar'},
-    {id:'dizimo', label:'Dízimo', icon:'heart'},
+  ];
+  if(titheEnabled()) nav.push({id:'dizimo', label:'Dízimo', icon:'heart'});
+  nav.push(
     {id:'lembretes', label:'Lembretes', icon:'bell'},
     {id:'auditoria', label:'Auditoria', icon:'history'},
     {id:'ia', label:'Conselheira IA', icon:'sparkles'},
     {id:'tutorial', label:'Tutorial', icon:'book'},
-    {id:'feedback', label:'Feedback', icon:'star'},
-  ];
+    {id:'feedback', label:'Feedback', icon:'star'}
+  );
   if(SESSION && SESSION.role==='admin'){
     nav.push({id:'admin', label:'Painel Admin', icon:'shield'});
     nav.push({id:'feedbacks-admin', label:'Feedbacks', icon:'message'});
@@ -1463,6 +1487,10 @@ function render(){
   const root = document.getElementById('root');
   if(!SESSION){ renderAuthGate(); return; }
   if(!DATA.settings){ root.innerHTML = renderOnboarding(); return; }
+  // Dízimo foi desligado (ou a pessoa tinha essa aba aberta antes de
+  // desligar) — volta pro dashboard em vez de renderizar uma aba que nem
+  // aparece mais no menu.
+  if(TAB==='dizimo' && !titheEnabled()) TAB = 'dashboard';
 
   const NAV = getNav();
   // "cartao" fica de fora: o painel de cada cartão já navega sozinho pra
@@ -1692,11 +1720,11 @@ function renderDashboard(mKey){
   const saidas = cashTx.filter(t=>t.type==='saida').reduce((s,t)=>s+Number(t.amount),0);
   const saldo = entradas - saidas;
   const people = getPeople();
-  const titheOwed = people.reduce((sum,p)=>{
+  const titheOwed = titheEnabled() ? people.reduce((sum,p)=>{
     const inc = cashTx.filter(t=>t.type==='entrada' && (people.length===1 || t.personId===p.id)).reduce((s,t)=>s+Number(t.amount),0);
     const paid = DATA.titheStatus[`${p.id}-${mKey}`];
     return sum + (paid ? 0 : inc*0.1);
-  },0);
+  },0) : 0;
   const upcoming = getUpcomingReminders();
   const budgetsOver = DATA.budgets.filter(b=>{
     const spent = monthTx.filter(t=>t.type==='saida'&&t.categoryId===b.categoryId).reduce((s,t)=>s+Number(t.amount),0);
@@ -1713,7 +1741,7 @@ function renderDashboard(mKey){
       <div class="hero-balance-secondary">
         <div class="mini-stat"><div class="mini-stat-label">Entradas</div><div class="mini-stat-value" style="color:var(--verdigris)">${fmt(entradas)}</div></div>
         <div class="mini-stat"><div class="mini-stat-label">Saídas</div><div class="mini-stat-value" style="color:var(--garnet)">${fmt(saidas)}</div></div>
-        <div class="mini-stat"><div class="mini-stat-label">Dízimo pendente</div><div class="mini-stat-value" style="color:var(--brass-deep)">${fmt(titheOwed)}</div></div>
+        ${titheEnabled() ? `<div class="mini-stat"><div class="mini-stat-label">Dízimo pendente</div><div class="mini-stat-value" style="color:var(--brass-deep)">${fmt(titheOwed)}</div></div>` : ''}
       </div>
     </div>
     <section style="margin-bottom:24px;">
