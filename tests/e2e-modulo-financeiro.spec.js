@@ -56,6 +56,14 @@ function check(label, cond) {
   await page.fill('#ob-name2', 'Ana');
   await page.click('text=Começar a usar');
   await page.waitForTimeout(800);
+
+  // ---- Tutorial guiado de primeiro contato ----
+  // Roda antes de qualquer outro aviso (toast de feedback/PWA ficam represados
+  // enquanto ele está ativo, ver TUTORIAL_ACTIVE em app.js) — pula aqui pra não
+  // interferir nas checagens que já existiam antes dele.
+  check('tutorial guiado aparece após o onboarding', await page.locator('text=Passo 1 de 7').count() > 0);
+  await page.click('button:has-text("Pular tutorial")');
+  await page.waitForTimeout(400);
   check('onboarding concluído (dashboard visível)', await page.locator('text=Saldo do mês').count() > 0);
 
   // ---- Aviso minimalista de feedback (toast que aparece uma vez e some sozinho) ----

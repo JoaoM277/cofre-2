@@ -268,6 +268,7 @@ function isIOSDevice(){
   return iOSByUA || iPadOS13;
 }
 function maybeShowPwaInstallToast(){
+  if(TUTORIAL_ACTIVE) return; // não empilha aviso durante o tour guiado
   if(PWA_TOAST_SHOWN_THIS_SESSION) return;
   if(!SESSION || !DATA || !DATA.settings) return; // só depois de logado e com onboarding feito
   if(isStandaloneDisplay()) return; // já instalado/rodando como app
@@ -314,6 +315,7 @@ function showIosInstallInstructions(){
 const FEEDBACK_TOAST_KEY = 'cofre_feedback_toast_seen_v1';
 let FEEDBACK_TOAST_SHOWN_THIS_SESSION = false;
 function maybeShowFeedbackToast(){
+  if(TUTORIAL_ACTIVE) return; // não empilha aviso durante o tour guiado
   if(FEEDBACK_TOAST_SHOWN_THIS_SESSION) return;
   if(TAB === 'feedback') return; // já está lá, não faz sentido anunciar
   let seen = false;
@@ -334,6 +336,72 @@ function maybeShowFeedbackToast(){
 function goToFeedbackFromToast(){
   removeFloatingToast('feedback-toast', true);
   switchTab('feedback');
+}
+
+// ---------------- Tutorial guiado (primeiro contato) ----------------
+// Pedido veio direto do feedback de usuários: um passo a passo mostrando o
+// fluxo inteiro do app na primeira vez que a pessoa usa o Cofre. Cada passo
+// troca a aba de verdade por baixo (a pessoa vê a tela real, não uma imagem)
+// e mostra um modal simples explicando o que fazer ali — sem coach marks
+// apontando elemento por elemento, como pedido: direto ao ponto, sem efeito
+// visual extra. "Visto" fica salvo no localStorage (mesmo esquema do toast
+// de feedback/PWA acima), então não repete depois — nem pra quem já tinha
+// conta antes deste recurso existir, que vê o tour uma única vez na
+// primeira tela carregada após esta atualização.
+const TUTORIAL_KEY = 'cofre_tutorial_seen_v1';
+let TUTORIAL_ACTIVE = false;
+let TUTORIAL_SHOWN_THIS_SESSION = false;
+let TUTORIAL_STEP = 0;
+const TUTORIAL_STEPS = [
+  { tab: 'dashboard', title: 'Bem-vindo(a) ao Cofre!', text: 'Você já entrou na sua conta. Antes de começar, um tour rápido pelo app — são só alguns passos, direto ao ponto.' },
+  { tab: 'transacoes', title: 'Entradas & Saídas', text: 'É aqui que fica o seu dia a dia financeiro. Toque em "+ Novo lançamento" para registrar uma entrada (salário, recebimento) ou saída (compra, conta) assim que ela acontecer.' },
+  { tab: 'transacoes', title: 'Entrada ou saída?', text: 'Cada lançamento é marcado como Entrada (verde) ou Saída (vermelho). O Cofre soma os dois automaticamente e mostra o seu saldo real na Visão Geral.' },
+  { tab: 'cartao', title: 'Cadastre seus cartões', text: 'Na aba Cartões, toque em "+ Novo cartão" e informe limite, dia de fechamento e vencimento. A fatura é sempre calculada a partir dos lançamentos — você nunca digita o valor dela.' },
+  { tab: 'transacoes', title: 'Uma saída no cartão', text: 'Para lançar uma compra no crédito, crie um lançamento normal em "Entradas & Saídas": escolha Saída e, em "Forma de pagamento", selecione Cartão — dá pra escolher o cartão e o número de parcelas.' },
+  { tab: 'dashboard', title: 'Seu resumo do mês', text: 'A Visão Geral mostra o saldo do mês, entradas, saídas, dízimo pendente e o andamento dos orçamentos — tudo atualizado sozinho conforme você lança.' },
+  { tab: 'feedback', title: 'Fale com a gente', text: 'Achou algo que podia melhorar, ou quer sugerir uma ideia? A aba Feedback está sempre aberta pra isso — sua opinião ajuda a melhorar o Cofre.' },
+];
+function maybeStartTutorial(){
+  if(TUTORIAL_SHOWN_THIS_SESSION) return;
+  if(!SESSION || !DATA || !DATA.settings) return; // só depois de logado e com onboarding feito
+  let seen = false;
+  try{ seen = localStorage.getItem(TUTORIAL_KEY) === '1'; }catch(e){}
+  if(seen) return;
+  TUTORIAL_SHOWN_THIS_SESSION = true;
+  TUTORIAL_ACTIVE = true;
+  TUTORIAL_STEP = 0;
+  showTutorialStep();
+}
+function showTutorialStep(){
+  const step = TUTORIAL_STEPS[TUTORIAL_STEP];
+  if(!step){ finishTutorial(); return; }
+  switchTab(step.tab);
+  const isLast = TUTORIAL_STEP === TUTORIAL_STEPS.length - 1;
+  openModal(`
+    <div class="sub" style="margin-bottom:4px;">Passo ${TUTORIAL_STEP+1} de ${TUTORIAL_STEPS.length}</div>
+    <h3>${esc(step.title)}</h3>
+    <div class="sub" style="margin:8px 0 20px;">${esc(step.text)}</div>
+    <div class="modal-actions" style="justify-content:space-between;">
+      <button class="btn secondary" onclick="skipTutorial()">Pular tutorial</button>
+      <button class="btn" onclick="nextTutorialStep()">${isLast ? 'Concluir' : 'Próximo'}</button>
+    </div>
+  `);
+}
+function nextTutorialStep(){
+  TUTORIAL_STEP++;
+  if(TUTORIAL_STEP >= TUTORIAL_STEPS.length){ finishTutorial(); return; }
+  showTutorialStep();
+}
+function skipTutorial(){ finishTutorial(); }
+function finishTutorial(){
+  TUTORIAL_ACTIVE = false;
+  try{ localStorage.setItem(TUTORIAL_KEY, '1'); }catch(e){}
+  closeModal();
+  // Um render normal aqui dá ao toast de feedback/instalação PWA a chance
+  // que ficou represada durante o tour (maybeShowFeedbackToast/
+  // maybeShowPwaInstallToast recuam enquanto TUTORIAL_ACTIVE é true) — sem
+  // isso eles só apareceriam na próxima navegação manual da pessoa.
+  render();
 }
 
 // ---------------- Splash screen ----------------
@@ -1404,6 +1472,7 @@ function render(){
   else if(TAB==='feedbacks-admin'){ content.innerHTML = '<div class="empty">Carregando...</div>'; loadAndRenderFeedbackAdmin(); }
   else if(TAB==='admin'){ content.innerHTML = '<div class="empty">Carregando...</div>'; loadAndRenderAdmin(); }
 
+  maybeStartTutorial();
   maybeShowFeedbackToast();
   maybeShowPwaInstallToast();
 }

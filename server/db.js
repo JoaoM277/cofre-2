@@ -2,7 +2,10 @@ const path = require('path');
 const fs = require('fs');
 const Database = require('better-sqlite3');
 
-const DATA_DIR = path.join(__dirname, '..', 'data');
+// COFRE_DATA_DIR: override só para rodar testes/dev contra um banco isolado
+// (ex.: suíte e2e local), sem tocar no data/cofre.db real. Sem a variável,
+// comportamento é o mesmo de sempre.
+const DATA_DIR = process.env.COFRE_DATA_DIR || path.join(__dirname, '..', 'data');
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
 const db = new Database(path.join(DATA_DIR, 'cofre.db'));
