@@ -46,7 +46,8 @@ router.post('/clients', requireXhrHeader, async (req, res) => {
     info.lastInsertRowid,
     JSON.stringify({
       settings: null, categories: [], transactions: [], installments: [], cards: [],
-      accounts: [], purchases: [], invoices: {}, caixinhas: [], titheStatus: {}, reminders: [], budgets: []
+      accounts: [], purchases: [], invoices: {}, caixinhas: [], titheStatus: {}, reminders: [], budgets: [],
+      fixedDebts: [], fixedDebtPayments: {}
     })
   );
 

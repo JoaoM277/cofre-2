@@ -11,7 +11,7 @@ const ACTIONS = new Set([
   'criou', 'editou', 'excluiu', 'pagou', 'estornou', 'ativou', 'desativou'
 ]);
 const MODULES = new Set([
-  'transacoes', 'cartoes', 'contas', 'orcamentos', 'categorias', 'parcelas', 'caixinhas', 'lembretes'
+  'transacoes', 'cartoes', 'contas', 'orcamentos', 'categorias', 'parcelas', 'caixinhas', 'lembretes', 'dividas'
 ]);
 
 const MAX_DESCRIPTION = 500;

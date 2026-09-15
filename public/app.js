@@ -194,7 +194,8 @@ const ICON_PATHS = {
   message: '<path d="M4 5.5A2.3 2.3 0 0 1 6.3 3.2h11.4A2.3 2.3 0 0 1 20 5.5v8A2.3 2.3 0 0 1 17.7 15.8H10l-4.5 4v-4H6.3A2.3 2.3 0 0 1 4 13.5v-8Z"/>',
   chevronDown: '<path d="M5 8.5 12 15l7-6.5"/>',
   download: '<path d="M12 3.5v11"/><path d="M7.5 10 12 14.5 16.5 10"/><path d="M4.5 17.5v2A2 2 0 0 0 6.5 21.5h11a2 2 0 0 0 2-2v-2"/>',
-  book: '<path d="M12 6.3c-1.8-1.5-4.3-2.1-7-1.8v12.8c2.7-.3 5.2.3 7 1.8 1.8-1.5 4.3-2.1 7-1.8V4.5c-2.7-.3-5.2.3-7 1.8Z"/><path d="M12 6.3v12.8"/>'
+  book: '<path d="M12 6.3c-1.8-1.5-4.3-2.1-7-1.8v12.8c2.7-.3 5.2.3 7 1.8 1.8-1.5 4.3-2.1 7-1.8V4.5c-2.7-.3-5.2.3-7 1.8Z"/><path d="M12 6.3v12.8"/>',
+  repeat: '<path d="M4 7.5h11.5a3.5 3.5 0 0 1 3.5 3.5v1"/><path d="M7.5 4 4 7.5 7.5 11"/><path d="M20 16.5H8.5A3.5 3.5 0 0 1 5 13v-1"/><path d="M16.5 20 20 16.5 16.5 13"/>'
 };
 function icon(name, size){
   const s = size || 18;
@@ -424,6 +425,7 @@ const TUTORIAL_TOPICS = [
   { title: 'Entradas & Saídas', body: 'Registre toda movimentação de dinheiro assim que ela acontecer: um salário recebido, uma conta paga, uma compra no débito ou em dinheiro. Cada lançamento pede tipo (entrada ou saída), categoria, data, valor e, pra saídas, a forma de pagamento. Categorizar com consistência é o que faz os orçamentos por categoria funcionarem de verdade.' },
   { title: 'Cartões & Faturas', body: 'Cadastre cada cartão com limite, dia de fechamento e de vencimento. A fatura nunca é digitada — ela é sempre calculada automaticamente a partir das compras lançadas em Entradas & Saídas com forma de pagamento Cartão. Uma compra parcelada distribui as parcelas nas faturas seguintes sozinha.' },
   { title: 'Parcelas', body: 'Reúne todo compromisso futuro já assumido no crédito, pra você enxergar de uma vez quanto já está comprometido nos próximos meses antes de fechar uma compra nova.' },
+  { title: 'Dívidas Fixas', body: 'Cadastre uma vez uma saída que se repete todo mês — água, aluguel, internet — e só marque como paga a cada mês, sem relançar do zero. "Fixo" usa sempre o mesmo valor; "Variável" pede o valor na hora de pagar (útil pra contas como água ou luz, que mudam todo mês). Dá pra definir uma duração em meses (encerra sozinha) ou deixar sem prazo definido.' },
   { title: 'Orçamentos', body: 'Defina um teto de gasto por categoria antes do mês começar. O Cofre compara automaticamente o que foi gasto — incluindo compras no cartão ainda não pagas — contra esse teto e avisa quando ele estoura.' },
   { title: 'Caixinhas', body: 'Reservas com nome e valor-alvo definidos: uma viagem, uma emergência, um presente. Separe valores nelas aos poucos; o Cofre acompanha o quanto falta pra bater a meta.' },
   { title: 'Dízimo', body: 'A cada entrada registrada, o Cofre calcula 10% automaticamente. Quem marca como pago é você, mês a mês — é um lembrete e um cálculo, não um débito automático. É opcional: dá pra desligar em Configurações se não fizer sentido pro seu uso, e a aba some do menu.' },
@@ -509,6 +511,10 @@ const TIPS = {
   parcelas: [
     'Parcelar não é "não pagar agora" — é comprometer o seu eu do mês que vem. Antes de fechar uma parcela nova, some tudo que já está comprometido nos próximos meses.',
     'Regra informal saudável: parcelas não devem ultrapassar 30% da sua renda mensal. Passou disso, qualquer imprevisto vira bola de neve.'
+  ],
+  dividas: [
+    'Cadastrar uma conta como "variável" (água, luz) em vez de relançar todo mês evita o erro mais comum: esquecer de registrar justamente o mês em que ela veio mais alta.',
+    'Revise suas dívidas fixas a cada alguns meses — assinaturas esquecidas são o vazamento mais silencioso do orçamento, porque nunca "doem" na hora.'
   ],
   cartao: [
     'O cartão de crédito não é dinheiro extra, é uma data futura de pagamento. Trate a fatura como uma conta fixa que já existe, mesmo antes dela chegar.',
@@ -639,7 +645,8 @@ function DEFAULT_DATA(){
   return {
     settings:null, categories:[], transactions:[], installments:[],
     cards:[], accounts:[], purchases:[], invoices:{},
-    caixinhas:[], titheStatus:{}, reminders:[], budgets:[]
+    caixinhas:[], titheStatus:{}, reminders:[], budgets:[],
+    fixedDebts:[], fixedDebtPayments:{}
   };
 }
 
@@ -689,6 +696,11 @@ function migrateFinance(data){
     }
   }
   delete data.cardBills;
+
+  // Dívidas fixas (Task 3, Fase B) — contas antigas ainda não têm esses
+  // dois campos.
+  if(!Array.isArray(data.fixedDebts)) data.fixedDebts = [];
+  if(!data.fixedDebtPayments || typeof data.fixedDebtPayments !== 'object') data.fixedDebtPayments = {};
 
   // Conta padrão: sem pelo menos uma, o fluxo de "pagar fatura" fica
   // travado logo de cara. Segue o mesmo espírito do seed de categorias.
@@ -1602,6 +1614,7 @@ function getNav(){
     {id:'transacoes', label:'Entradas & Saídas', icon:'swap'},
     {id:'orcamentos', label:'Orçamentos', icon:'target'},
     {id:'parcelas', label:'Parcelas', icon:'layers'},
+    {id:'dividas', label:'Dívidas Fixas', icon:'repeat'},
     {id:'cartao', label:'Cartões', icon:'card'},
     {id:'caixinhas', label:'Caixinhas', icon:'jar'},
   ];
@@ -1648,7 +1661,7 @@ function render(){
   // "fatura atual"/"próxima fatura" (currentAndNextInvoice) — um seletor de
   // mês ali do lado não mudava nada na tela e só confundia (parecia que dava
   // pra "procurar" uma fatura de outro mês navegando por ele).
-  const showMonthPicker = ['dashboard','transacoes','dizimo','orcamentos'].includes(TAB);
+  const showMonthPicker = ['dashboard','transacoes','dizimo','orcamentos','dividas'].includes(TAB);
   const navHtml = NAV.map(n => `<button class="nav-btn ${TAB===n.id?'active':''}" onclick="switchTab('${n.id}')"><span class="nav-icon">${icon(n.icon)}</span>${n.label}</button>`).join('');
 
   root.innerHTML = `
@@ -1691,6 +1704,7 @@ function render(){
   else if(TAB==='transacoes') content.innerHTML = renderTransacoes(mKey);
   else if(TAB==='orcamentos') content.innerHTML = renderOrcamentos(mKey);
   else if(TAB==='parcelas') content.innerHTML = renderParcelas();
+  else if(TAB==='dividas') content.innerHTML = renderDividas(mKey);
   else if(TAB==='cartao') content.innerHTML = renderCartao(mKey);
   else if(TAB==='caixinhas') content.innerHTML = renderCaixinhas();
   else if(TAB==='dizimo') content.innerHTML = renderDizimo(mKey);
@@ -2772,6 +2786,255 @@ function removeInstallment(id){
   }, {title:'Cancelar parcelamento', confirmLabel:'Cancelar parcelamento', danger:true});
 }
 
+// ---------------- Dívidas Fixas ----------------
+// Saídas que se repetem todo mês, cadastradas uma única vez: "fixo" tem
+// valor invariável (aluguel), "variável" cobra o valor a cada pagamento
+// (conta de água, que muda todo mês mas é sempre a mesma conta). Marcar
+// como paga cria uma transaction real de saída (mesmo padrão do pagamento
+// de fatura em confirmPayInvoice) — conta pro saldo/orçamento/gráfico como
+// qualquer outra saída, não é um número calculado à parte.
+function monthOffset(fromKey, toKey){
+  const [fy,fm] = fromKey.split('-').map(Number);
+  const [ty,tm] = toKey.split('-').map(Number);
+  return (ty-fy)*12 + (tm-fm);
+}
+function isFixedDebtActiveInMonth(d, mKey){
+  if(d.status!=='ativa') return false;
+  const offset = monthOffset(d.startMonthKey, mKey);
+  if(offset<0) return false;
+  if(d.durationMode==='meses') return offset < (d.durationMonths||1);
+  return true; // indeterminado: ativa enquanto ninguém encerrar
+}
+function fixedDebtDurationLabel(d){
+  if(d.durationMode==='indeterminado') return 'Sem prazo definido';
+  const n = d.durationMonths||0;
+  if(n>=12){
+    const years = n/12;
+    const yearsStr = Number.isInteger(years) ? years : years.toFixed(1);
+    return `${n}x (${yearsStr} ano${years>1?'s':''})`;
+  }
+  return `${n}x`;
+}
+function renderDividas(mKey){
+  const debts = (DATA.fixedDebts||[]).slice().sort((a,b)=>(a.description||'').localeCompare(b.description||''));
+  const people = getPeople();
+  return `
+    ${renderTipCard('dividas')}
+    <div class="section-head">
+      <div class="sub">Cadastre uma vez uma saída que se repete todo mês — água, aluguel, assinatura — e só marque como paga a cada mês, sem relançar do zero.</div>
+      <button class="btn" onclick="openFixedDebtForm()">+ Nova dívida fixa</button>
+    </div>
+    <div class="row-list list-grouped">
+      ${debts.length===0 ? '<div class="empty"><span class="empty-title">Nenhuma dívida fixa cadastrada</span>Cadastre contas recorrentes pra não precisar relançar todo mês.</div>' :
+        debts.map(d=>renderFixedDebtRow(d, mKey, people)).join('')}
+    </div>
+  `;
+}
+function renderFixedDebtRow(d, mKey, people){
+  const active = isFixedDebtActiveInMonth(d, mKey);
+  const key = `${d.id}-${mKey}`;
+  const payment = (DATA.fixedDebtPayments||{})[key];
+  const paid = !!(payment && payment.paid);
+  const offset = monthOffset(d.startMonthKey, mKey);
+  let statusNote = '';
+  if(d.status!=='ativa') statusNote = 'encerrada';
+  else if(offset<0) statusNote = `começa em ${monthLabel(monthKeyToDate(d.startMonthKey))}`;
+  else if(d.durationMode==='meses' && offset>=(d.durationMonths||1)) statusNote = 'prazo encerrado';
+  return `
+    <div class="item-row" style="align-items:flex-start;">
+      <div class="item-left" style="align-items:flex-start;">
+        <span class="item-tag" style="background:${d.valueMode==='fixo'?'var(--brass-tint)':'var(--verdigris-tint)'}; color:${d.valueMode==='fixo'?'var(--brass-deep)':'var(--verdigris)'};">${d.valueMode==='fixo'?'Fixo':'Variável'}</span>
+        <div>
+          <div class="item-desc">${esc(d.description)}</div>
+          <div class="item-meta">
+            <span class="cat-chip"><span class="cat-dot" style="background:${categoryColor(d.categoryId)}"></span>${esc(categoryName(d.categoryId))}</span>
+            ${people.length>1?' · '+esc(personName(d.personId)):''}
+             · ${fixedDebtDurationLabel(d)}${d.valueMode==='fixo'?' · '+fmt(d.fixedAmount):''}${statusNote?' · '+statusNote:''}
+          </div>
+        </div>
+      </div>
+      <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; justify-content:flex-end;">
+        ${active ? (paid
+          ? `<button class="btn secondary small" onclick="undoFixedDebtPayment('${d.id}','${mKey}')">✓ Paga${payment.amount?' · '+fmt(payment.amount):''}</button>`
+          : `<button class="btn gold small" onclick="markFixedDebtPaid('${d.id}','${mKey}')">Marcar como paga</button>`
+        ) : ''}
+        <button class="icon-btn" onclick="openFixedDebtForm('${d.id}')" aria-label="Editar">${icon('edit',15)}</button>
+        <button class="btn secondary small" onclick="toggleFixedDebtStatus('${d.id}')">${d.status==='ativa'?'Encerrar':'Reativar'}</button>
+      </div>
+    </div>
+  `;
+}
+function openFixedDebtForm(editId){
+  const people = getPeople();
+  const d = editId ? (DATA.fixedDebts||[]).find(x=>x.id===editId) : null;
+  const valueMode0 = d ? d.valueMode : 'fixo';
+  const durationMode0 = d ? d.durationMode : 'indeterminado';
+  openModal(`
+    <h3>${d?'Editar':'Nova'} dívida fixa</h3>
+    <div class="form-grid full"><div class="field"><label>Descrição</label><input id="fd-desc" value="${d?esc(d.description):''}" placeholder="Ex: Aluguel, Água, Internet..."></div></div>
+    <div class="form-grid">
+      <div class="field">
+        <label>Categoria <button type="button" class="inline-link" onclick="openCategoryForm('saida','fd-category')">+ nova</button></label>
+        <select id="fd-category">${categoryOptionsHtml('saida', d?d.categoryId:null)}</select>
+      </div>
+      ${people.length>1?`<div class="field"><label>Responsável</label><select id="fd-person">${people.map(p=>`<option value="${p.id}" ${d&&d.personId===p.id?'selected':''}>${esc(p.name)}</option>`).join('')}</select></div>`:''}
+    </div>
+    <div class="form-grid">
+      <div class="field"><label>Valor</label>
+        <select id="fd-value-mode" onchange="updateFixedDebtFormDynamic()">
+          <option value="fixo" ${valueMode0==='fixo'?'selected':''}>Fixo (mesmo valor todo mês)</option>
+          <option value="variavel" ${valueMode0==='variavel'?'selected':''}>Variável (você informa ao pagar)</option>
+        </select>
+      </div>
+      <div class="field" id="fd-amount-wrap" style="${valueMode0==='variavel'?'display:none':''}">
+        <label>Valor mensal (R$)</label>
+        <input type="number" step="0.01" id="fd-amount" value="${d&&d.fixedAmount!=null?d.fixedAmount:''}" placeholder="0,00">
+      </div>
+    </div>
+    <div class="form-grid">
+      <div class="field"><label>Duração</label>
+        <select id="fd-duration-mode" onchange="updateFixedDebtFormDynamic()">
+          <option value="indeterminado" ${durationMode0==='indeterminado'?'selected':''}>Sem prazo definido</option>
+          <option value="meses" ${durationMode0==='meses'?'selected':''}>Número de meses</option>
+        </select>
+      </div>
+      <div class="field" id="fd-months-wrap" style="${durationMode0==='indeterminado'?'display:none':''}">
+        <label>Quantos meses</label>
+        <input type="number" min="1" max="600" id="fd-months" value="${d&&d.durationMonths?d.durationMonths:''}" placeholder="Ex: 48" oninput="updateFixedDebtYearsHint()">
+        <div class="field-hint" id="fd-years-hint"></div>
+      </div>
+    </div>
+    <div class="form-grid full"><div class="field"><label>Começa em</label><input type="month" id="fd-start" value="${d?d.startMonthKey:monthKey(CURRENT_MONTH)}"></div></div>
+    <input type="hidden" id="fd-edit-id" value="${d?d.id:''}">
+    <div class="error-msg" id="fd-error"></div>
+    <div class="modal-actions">
+      <button class="btn secondary" onclick="closeModal()">Cancelar</button>
+      <button class="btn" onclick="saveFixedDebt()">Salvar</button>
+    </div>
+  `);
+  updateFixedDebtFormDynamic();
+}
+function updateFixedDebtFormDynamic(){
+  document.getElementById('fd-amount-wrap').style.display = val('fd-value-mode')==='variavel' ? 'none' : '';
+  document.getElementById('fd-months-wrap').style.display = val('fd-duration-mode')==='indeterminado' ? 'none' : '';
+  updateFixedDebtYearsHint();
+}
+function updateFixedDebtYearsHint(){
+  const hintEl = document.getElementById('fd-years-hint');
+  if(!hintEl) return;
+  const months = Number(val('fd-months'))||0;
+  if(months>=12){
+    const years = months/12;
+    hintEl.textContent = `≈ ${Number.isInteger(years)?years:years.toFixed(1)} ano${years>1?'s':''}`;
+  } else {
+    hintEl.textContent = '';
+  }
+}
+function saveFixedDebt(){
+  const errEl = document.getElementById('fd-error');
+  if(errEl) errEl.textContent = '';
+  const description = val('fd-desc').trim();
+  if(!description){ if(errEl) errEl.textContent = 'Informe uma descrição.'; return; }
+  const categoryId = val('fd-category');
+  const personSel = document.getElementById('fd-person');
+  const personId = personSel ? personSel.value : (getPeople()[0]?.id || null);
+  const valueMode = val('fd-value-mode');
+  const fixedAmount = valueMode==='fixo' ? Number(val('fd-amount')) : null;
+  if(valueMode==='fixo' && (!fixedAmount || fixedAmount<=0)){ if(errEl) errEl.textContent = 'Informe um valor mensal válido.'; return; }
+  const durationMode = val('fd-duration-mode');
+  const durationMonths = durationMode==='meses' ? Number(val('fd-months')) : null;
+  if(durationMode==='meses' && (!durationMonths || durationMonths<1)){ if(errEl) errEl.textContent = 'Informe quantos meses.'; return; }
+  const startMonthKey = val('fd-start') || monthKey(CURRENT_MONTH);
+  const editId = val('fd-edit-id');
+
+  if(editId){
+    const d = (DATA.fixedDebts||[]).find(x=>x.id===editId);
+    if(!d) return;
+    Object.assign(d, {description, categoryId, personId, valueMode, fixedAmount, durationMode, durationMonths, startMonthKey});
+    d.updated_at = nowIso();
+    closeModal();
+    persist();
+    logAudit('editou','dividas','divida_fixa', d.id, `editou a dívida fixa "${description}"`, null, {categoryId});
+  } else {
+    const d = {
+      id:uid(), description, categoryId, personId,
+      valueMode, fixedAmount, durationMode, durationMonths,
+      startMonthKey, status:'ativa', created_at:nowIso(), updated_at:nowIso()
+    };
+    DATA.fixedDebts.push(d);
+    closeModal();
+    persist();
+    logAudit('criou','dividas','divida_fixa', d.id, `cadastrou a dívida fixa "${description}"`, null, {categoryId});
+  }
+}
+function toggleFixedDebtStatus(debtId){
+  const d = (DATA.fixedDebts||[]).find(x=>x.id===debtId);
+  if(!d) return;
+  const activating = d.status!=='ativa';
+  confirmDialog(`Quer mesmo ${activating?'reativar':'encerrar'} "${d.description}"? ${activating?'Ela volta a aparecer pra pagamento nos próximos meses.':'Ela para de aparecer pra pagamento nos próximos meses — o histórico já pago continua intacto.'}`, ()=>{
+    d.status = activating ? 'ativa' : 'encerrada';
+    d.updated_at = nowIso();
+    closeModal();
+    persist();
+    logAudit(activating?'ativou':'desativou','dividas','divida_fixa', d.id, `${activating?'reativou':'encerrou'} "${d.description}"`, null, {categoryId:d.categoryId});
+  }, {title: activating?'Reativar dívida fixa':'Encerrar dívida fixa', confirmLabel: activating?'Reativar':'Encerrar', danger:!activating});
+}
+function payFixedDebt(debtId, mKey, amount){
+  const d = (DATA.fixedDebts||[]).find(x=>x.id===debtId);
+  if(!d) return;
+  const tx = {
+    id:uid(), type:'saida', personId: d.personId || getActivePersonId(), categoryId: d.categoryId,
+    description: d.description, amount, date: dateStr(new Date()),
+    paymentMethod:'debito', cardId:null, purchaseId:null,
+    installmentNumber:null, installmentCount:null, invoiceMonthKey:null,
+    kind:'compra', accountId:null, deletedAt:null
+  };
+  DATA.transactions.push(tx);
+  DATA.fixedDebtPayments[`${debtId}-${mKey}`] = {paid:true, amount, paidAt:nowIso(), transactionId:tx.id};
+  closeModal();
+  persist();
+  logAudit('pagou','dividas','divida_fixa', debtId, `marcou "${d.description}" (${monthLabel(monthKeyToDate(mKey))}) como paga — ${fmt(amount)}`, null, {categoryId:d.categoryId});
+}
+function markFixedDebtPaid(debtId, mKey){
+  const d = (DATA.fixedDebts||[]).find(x=>x.id===debtId);
+  if(!d) return;
+  if(d.valueMode==='fixo'){
+    confirmDialog(`Marcar "${d.description}" (${monthLabel(monthKeyToDate(mKey))}) como paga — ${fmt(d.fixedAmount)}?`, ()=>{
+      payFixedDebt(debtId, mKey, d.fixedAmount);
+    }, {title:'Marcar como paga', confirmLabel:'Confirmar'});
+    return;
+  }
+  openModal(`
+    <h3>Marcar "${esc(d.description)}" como paga</h3>
+    <div class="sub" style="margin-bottom:14px;">${monthLabel(monthKeyToDate(mKey))} — informe o valor pago este mês.</div>
+    <div class="form-grid full"><div class="field"><label>Valor (R$)</label><input type="number" step="0.01" id="fd-pay-amount" placeholder="0,00"></div></div>
+    <div class="error-msg" id="fd-pay-error"></div>
+    <div class="modal-actions">
+      <button class="btn secondary" onclick="closeModal()">Cancelar</button>
+      <button class="btn" onclick="confirmFixedDebtPayment('${debtId}','${mKey}')">Confirmar pagamento</button>
+    </div>
+  `);
+}
+function confirmFixedDebtPayment(debtId, mKey){
+  const errEl = document.getElementById('fd-pay-error');
+  const amount = Number(val('fd-pay-amount'));
+  if(!amount || amount<=0){ if(errEl) errEl.textContent = 'Informe um valor válido.'; return; }
+  payFixedDebt(debtId, mKey, amount);
+}
+function undoFixedDebtPayment(debtId, mKey){
+  const d = (DATA.fixedDebts||[]).find(x=>x.id===debtId);
+  const key = `${debtId}-${mKey}`;
+  const rec = (DATA.fixedDebtPayments||{})[key];
+  if(!rec || !rec.paid) return;
+  confirmDialog(`Desmarcar "${d?d.description:''}" (${monthLabel(monthKeyToDate(mKey))}) como paga? Isso remove a saída registrada em Entradas & Saídas.`, ()=>{
+    if(rec.transactionId) softDeleteTx(rec.transactionId, {silent:true});
+    delete DATA.fixedDebtPayments[key];
+    closeModal();
+    persist();
+    logAudit('estornou','dividas','divida_fixa', debtId, `desmarcou "${d?d.description:''}" (${monthLabel(monthKeyToDate(mKey))}) como paga`, null, {categoryId:d?d.categoryId:null});
+  }, {title:'Desmarcar pagamento', confirmLabel:'Desmarcar', danger:true});
+}
+
 // ---------------- Cartão ----------------
 function renderCartao(mKey){
   const people = getPeople();
@@ -3173,7 +3436,7 @@ function removeAccount(id){
 // mostra o estado atual. Aqui o objetivo é "quem fez o quê e quando",
 // puxado da tabela append-only do servidor (nunca do blob local).
 const AUDIT_ACTION_LABELS = {criou:'Criou', editou:'Editou', excluiu:'Excluiu', pagou:'Pagou', estornou:'Estornou', ativou:'Ativou', desativou:'Desativou'};
-const AUDIT_MODULE_LABELS = {transacoes:'Lançamentos', cartoes:'Cartões', contas:'Contas', orcamentos:'Orçamentos', categorias:'Categorias', parcelas:'Parcelas', caixinhas:'Caixinhas', lembretes:'Lembretes'};
+const AUDIT_MODULE_LABELS = {transacoes:'Lançamentos', cartoes:'Cartões', contas:'Contas', orcamentos:'Orçamentos', categorias:'Categorias', parcelas:'Parcelas', caixinhas:'Caixinhas', lembretes:'Lembretes', dividas:'Dívidas Fixas'};
 let AUDIT_EVENTS = [];
 let AUDIT_FILTERS = {personId:'all', action:'all', module:'all', period:'mes', customFrom:'', customTo:''};
 

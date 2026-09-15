@@ -33,7 +33,9 @@ function defaultData() {
     caixinhas: [],
     titheStatus: {},
     reminders: [],
-    budgets: []
+    budgets: [],
+    fixedDebts: [],
+    fixedDebtPayments: {}
   };
 }
 

@@ -14,7 +14,10 @@ function isValidBundle(data) {
   const arrayFields = [
     'categories', 'transactions', 'installments', 'cards', 'caixinhas', 'reminders', 'budgets',
     // accounts/purchases: novas entidades do módulo de cartões/faturas (ver PLANO.md).
-    'accounts', 'purchases'
+    'accounts', 'purchases',
+    // fixedDebts: dívidas fixas/recorrentes (Task 3, Fase B) — definição de
+    // cada saída repetitiva (água, aluguel, assinatura...).
+    'fixedDebts'
   ];
   for (const f of arrayFields) {
     if (!Array.isArray(data[f])) return false;
@@ -24,6 +27,9 @@ function isValidBundle(data) {
   // mas sem valor manual — ver PLANO.md seção 2). Aceita qualquer um dos dois nomes
   // presentes como objeto, pra não travar uma migração em andamento no cliente.
   if (typeof data.invoices !== 'object' && typeof data.cardBills !== 'object') return false;
+  // fixedDebtPayments: mapa "debtId-mKey" -> estado do pagamento daquele mês,
+  // mesmo espírito de invoices/titheStatus (nunca guarda valor calculável).
+  if (typeof data.fixedDebtPayments !== 'object') return false;
   if (data.settings !== null && typeof data.settings !== 'object') return false;
   return true;
 }
