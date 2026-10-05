@@ -665,6 +665,12 @@ let authRegisterMode = 'single';
 let authRegisterSpouseEmail = '';
 let authRegisterTithe = true;
 let AUTH_ERROR = '';
+// "Esqueci minha senha": RESET_TOKEN vem da query string (?reset=...) de um
+// link recebido por e-mail — some do estado assim que o reset é concluído
+// (ver init() e renderResetPassword). AUTH_FORGOT_SENT controla a tela de
+// confirmação depois de pedir o link (ver renderForgotPassword).
+let RESET_TOKEN = null;
+let AUTH_FORGOT_SENT = false;
 let ADMIN_CLIENTS = [];
 let FEEDBACK_RATING = 0;
 let FEEDBACK_SENT = false;
@@ -1333,15 +1339,10 @@ function renderFeedbackAdminRow(f){
 // ================= AUTH SCREENS =================
 function renderAuthGate(){
   const root = document.getElementById('root');
-  root.innerHTML = `
-    <div class="auth-wrap">
-      <div class="auth-hero">
-        ${brandMarkSvg(44)}
-        <div class="brand" style="justify-content:center; padding:0;">Cofre<span class="accent">.</span></div>
-        <p>Suas finanças, guardadas com cuidado — sozinho(a) ou a dois.</p>
-      </div>
-      <div class="card" style="margin-top:20px;">
-        <div class="auth-tabs">
+  if(RESET_TOKEN){ root.innerHTML = authWrapHtml(renderResetPasswordCard()); return; }
+  if(AUTH_MODE==='forgot'){ root.innerHTML = authWrapHtml(renderForgotPasswordCard()); return; }
+  root.innerHTML = authWrapHtml(`
+      <div class="auth-tabs">
           <div class="auth-tab ${AUTH_MODE==='login'?'active':''}" onclick="setAuthMode('login')">Entrar</div>
           <div class="auth-tab ${AUTH_MODE==='register'?'active':''}" onclick="setAuthMode('register')">Criar conta</div>
         </div>
@@ -1351,6 +1352,9 @@ function renderAuthGate(){
         ` : ''}
         <div class="form-grid full"><div class="field"><label>E-mail</label><input id="auth-email" type="email" placeholder="voce@email.com"></div></div>
         <div class="form-grid full"><div class="field"><label>Senha</label><input id="auth-password" type="password" placeholder="${AUTH_MODE==='register'?'mínimo 8 caracteres':'sua senha'}"></div></div>
+        ${AUTH_MODE==='login' ? `
+        <div class="hint" style="text-align:right; margin-top:-8px;"><a onclick="event.preventDefault(); setAuthMode('forgot')">Esqueci minha senha</a></div>
+        ` : ''}
         ${AUTH_MODE==='register' ? `
         <label style="margin-top:2px;">Como você vai usar o Cofre?</label>
         <div class="mode-toggle">
@@ -1377,11 +1381,95 @@ function renderAuthGate(){
         ` : ''}
         <button class="btn" style="width:100%; margin-top:6px;" id="auth-submit-btn" onclick="${AUTH_MODE==='login'?'submitLogin()':'submitRegister()'}">${AUTH_MODE==='login'?'Entrar':'Criar minha conta'}</button>
         <div class="hint">Suas credenciais nunca ficam guardadas no navegador: a senha é validada no servidor (hash bcrypt) e a sessão usa um cookie seguro, inacessível via JavaScript.</div>
+  `);
+}
+// Moldura comum das telas de autenticação (login/criar conta, esqueci
+// minha senha, redefinir senha) — só o conteúdo do cartão muda.
+function authWrapHtml(innerHtml){
+  return `
+    <div class="auth-wrap">
+      <div class="auth-hero">
+        ${brandMarkSvg(44)}
+        <div class="brand" style="justify-content:center; padding:0;">Cofre<span class="accent">.</span></div>
+        <p>Suas finanças, guardadas com cuidado — sozinho(a) ou a dois.</p>
+      </div>
+      <div class="card" style="margin-top:20px;">
+        ${innerHtml}
       </div>
     </div>
   `;
 }
-function setAuthMode(m){ AUTH_MODE = m; AUTH_ERROR=''; renderAuthGate(); }
+function setAuthMode(m){ AUTH_MODE = m; AUTH_ERROR=''; AUTH_FORGOT_SENT=false; renderAuthGate(); }
+
+// ---------------- Esqueci minha senha ----------------
+function renderForgotPasswordCard(){
+  if(AUTH_FORGOT_SENT){
+    return `
+      <div class="error-msg" style="color:var(--ink-soft);">Se esse e-mail tiver uma conta no Cofre, enviamos um link de redefinição para ele agora. Confira também a caixa de spam.</div>
+      <a onclick="event.preventDefault(); setAuthMode('login')">Voltar para o login</a>
+    `;
+  }
+  return `
+    <div class="sub" style="margin-bottom:12px;">Informe o e-mail da sua conta — vamos enviar um link para você escolher uma nova senha.</div>
+    <div class="error-msg">${esc(AUTH_ERROR)}</div>
+    <div class="form-grid full"><div class="field"><label>E-mail</label><input id="auth-forgot-email" type="email" placeholder="voce@email.com"></div></div>
+    <button class="btn" style="width:100%; margin-top:6px;" id="auth-forgot-btn" onclick="submitForgotPassword()">Enviar link</button>
+    <div class="hint"><a onclick="event.preventDefault(); setAuthMode('login')">Voltar para o login</a></div>
+  `;
+}
+async function submitForgotPassword(){
+  const btn = document.getElementById('auth-forgot-btn'); btn.disabled = true;
+  const email = val('auth-forgot-email');
+  try{
+    await api('/auth/forgot-password', {method:'POST', body:{email}});
+  }catch(e){
+    // Mesmo em erro de rede/servidor, não dá pra distinguir pro usuário
+    // "e-mail não existe" de "deu problema" — só mostra erro genérico aqui
+    // se a própria requisição falhar (ex.: rate limit), não o resultado.
+    AUTH_ERROR = e.message || 'Não foi possível enviar o link agora. Tente novamente.';
+    renderAuthGate();
+    return;
+  }
+  AUTH_FORGOT_SENT = true;
+  renderAuthGate();
+}
+
+// ---------------- Redefinir senha (a partir do link por e-mail) ----------------
+function renderResetPasswordCard(){
+  return `
+    <div class="sub" style="margin-bottom:12px;">Escolha uma nova senha para sua conta.</div>
+    <div class="error-msg">${esc(AUTH_ERROR)}</div>
+    <div class="form-grid full"><div class="field"><label>Nova senha</label><input type="password" id="reset-new-password" placeholder="mínimo 8 caracteres"></div></div>
+    <div class="form-grid full"><div class="field"><label>Confirmar nova senha</label><input type="password" id="reset-new-password-confirm"></div></div>
+    <button class="btn" style="width:100%; margin-top:6px;" id="reset-submit-btn" onclick="submitResetPassword()">Redefinir senha</button>
+  `;
+}
+async function submitResetPassword(){
+  const btn = document.getElementById('reset-submit-btn'); btn.disabled = true;
+  const newPassword = val('reset-new-password');
+  const confirm = val('reset-new-password-confirm');
+  if(newPassword !== confirm){
+    AUTH_ERROR = 'A confirmação não é igual à nova senha.';
+    btn.disabled = false;
+    renderAuthGate();
+    return;
+  }
+  try{
+    await api('/auth/reset-password', {method:'POST', body:{token: RESET_TOKEN, newPassword}});
+  }catch(e){
+    AUTH_ERROR = e.message || 'Não foi possível redefinir a senha.';
+    renderAuthGate();
+    return;
+  }
+  // Limpa o token da URL e do estado — um link de reset é de uso único,
+  // não deve continuar "ativo" se a pessoa recarregar a página depois.
+  RESET_TOKEN = null;
+  AUTH_ERROR = '';
+  AUTH_MODE = 'login';
+  history.replaceState(null, '', location.pathname);
+  renderAuthGate();
+}
+
 // Nunca chama renderAuthGate() aqui — um full re-render apagaria nome/
 // e-mail/senha já digitados (mesma preocupação já documentada no checkbox
 // de consentimento, logo abaixo). Manipula o DOM direto, como
@@ -1708,6 +1796,10 @@ document.addEventListener('keydown', (e)=>{ if(e.key==='Escape') closeSidebar();
 
 function render(){
   const root = document.getElementById('root');
+  // Link de redefinição de senha tem prioridade sobre qualquer sessão já
+  // aberta nesse navegador — é uma ação pontual vinda de e-mail, não uma
+  // tela normal do app.
+  if(RESET_TOKEN){ renderAuthGate(); return; }
   if(!SESSION){ renderAuthGate(); return; }
   if(!DATA.settings){ root.innerHTML = renderOnboarding(); return; }
   // Dízimo foi desligado (ou a pessoa tinha essa aba aberta antes de
@@ -3894,6 +3986,14 @@ async function adminDeleteClient(id){
 
 // ---------------- Init ----------------
 (async function init(){
+  RESET_TOKEN = new URLSearchParams(location.search).get('reset') || null;
+  if(RESET_TOKEN){
+    // Link de e-mail: nem precisa checar sessão — a tela de redefinição
+    // (render -> renderAuthGate) já cobre esse caso antes de qualquer coisa.
+    render();
+    hideSplash();
+    return;
+  }
   try{
     const me = await api('/auth/me');
     SESSION = me.user;

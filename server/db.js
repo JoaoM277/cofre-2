@@ -98,6 +98,23 @@ db.exec(`
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
   CREATE INDEX IF NOT EXISTS idx_feedback_created ON feedback(created_at DESC);
+
+  -- ---------------------------------------------------------------------
+  -- Redefinição de senha ("esqueci minha senha") — guarda só o HASH do
+  -- token (nunca o valor em texto puro) enviado por e-mail, igual ao
+  -- cuidado já existente com password_hash. Token de uso único
+  -- (used_at) e com validade curta (expires_at), ambos checados em
+  -- server/routes/auth.js na hora de consumir.
+  -- ---------------------------------------------------------------------
+  CREATE TABLE IF NOT EXISTS password_resets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token_hash TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    used_at TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_password_resets_user ON password_resets(user_id);
 `);
 
 // -----------------------------------------------------------------------

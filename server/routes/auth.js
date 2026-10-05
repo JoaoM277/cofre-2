@@ -1,8 +1,10 @@
 const express = require('express');
+const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const rateLimit = require('express-rate-limit');
 const db = require('../db');
 const { issueToken, clearToken, requireAuth, requireXhrHeader } = require('../middleware/auth');
+const { sendPasswordResetEmail } = require('../mailer');
 
 const router = express.Router();
 
@@ -10,6 +12,7 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MIN_PASSWORD_LEN = 8;
 const MAX_FAILED_ATTEMPTS = 5;
 const LOCK_MINUTES = 15;
+const RESET_TOKEN_MINUTES = 30;
 
 // Limita tentativas de login/registro por IP para dificultar força bruta.
 const authLimiter = rateLimit({
@@ -236,6 +239,75 @@ router.post('/change-password', authLimiter, requireAuth, requireXhrHeader, asyn
 
   const newHash = await bcrypt.hash(newPassword, 12);
   db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(newHash, req.user.id);
+  res.json({ ok: true });
+});
+
+// ---- Esqueci minha senha ----
+// Mesma lógica de "resposta genérica" do login: a confirmação nunca muda
+// conforme o e-mail existir ou não, pra não virar um jeito de descobrir
+// quais e-mails têm conta aqui.
+function hashToken(token) {
+  return crypto.createHash('sha256').update(token).digest('hex');
+}
+
+router.post('/forgot-password', authLimiter, requireXhrHeader, async (req, res) => {
+  const email = String(req.body.email || '').trim().toLowerCase();
+  const genericOk = () => res.json({ ok: true });
+
+  if (!EMAIL_RE.test(email)) return genericOk();
+
+  const user = db.prepare('SELECT id, email FROM users WHERE email = ?').get(email);
+  if (!user) return genericOk();
+
+  // Um link novo invalida qualquer link anterior ainda não usado.
+  db.prepare('DELETE FROM password_resets WHERE user_id = ? AND used_at IS NULL').run(user.id);
+
+  const token = crypto.randomBytes(32).toString('hex');
+  const expiresAt = new Date(Date.now() + RESET_TOKEN_MINUTES * 60 * 1000).toISOString();
+  db.prepare('INSERT INTO password_resets (user_id, token_hash, expires_at) VALUES (?, ?, ?)')
+    .run(user.id, hashToken(token), expiresAt);
+
+  const baseUrl = (process.env.APP_BASE_URL || 'http://localhost:3000').replace(/\/+$/, '');
+  const link = `${baseUrl}/?reset=${token}`;
+
+  try {
+    await sendPasswordResetEmail(user.email, link);
+  } catch (e) {
+    // Não vaza falha de envio pro cliente (mesma resposta genérica) —
+    // só registra no servidor pra quem opera o app poder notar/investigar.
+    console.error('Falha ao enviar e-mail de redefinição de senha:', e.message);
+  }
+  genericOk();
+});
+
+router.post('/reset-password', authLimiter, requireXhrHeader, async (req, res) => {
+  const token = String(req.body.token || '');
+  const newPassword = String(req.body.newPassword || '');
+  if (!token) return res.status(400).json({ error: 'Link inválido ou expirado.' });
+  if (newPassword.length < MIN_PASSWORD_LEN) {
+    return res.status(400).json({ error: `A nova senha precisa ter pelo menos ${MIN_PASSWORD_LEN} caracteres.` });
+  }
+
+  const tokenHash = hashToken(token);
+  const row = db.prepare(
+    'SELECT id, user_id, expires_at FROM password_resets WHERE token_hash = ? AND used_at IS NULL'
+  ).get(tokenHash);
+  // Expiração é comparada em JS (não no SQL): expires_at é gravado como ISO
+  // string (new Date().toISOString(), igual a locked_until em /login), formato
+  // diferente do datetime('now') do SQLite — comparar os dois como texto no
+  // SQL dá resultado errado.
+  if (!row || new Date(row.expires_at) <= new Date()) {
+    return res.status(400).json({ error: 'Link inválido ou expirado. Peça uma nova redefinição.' });
+  }
+
+  const newHash = await bcrypt.hash(newPassword, 12);
+  db.transaction(() => {
+    db.prepare('UPDATE users SET password_hash = ?, failed_attempts = 0, locked_until = NULL WHERE id = ?')
+      .run(newHash, row.user_id);
+    db.prepare("UPDATE password_resets SET used_at = datetime('now') WHERE id = ?").run(row.id);
+    db.prepare('DELETE FROM password_resets WHERE user_id = ? AND id != ?').run(row.user_id, row.id);
+  })();
+
   res.json({ ok: true });
 });
 
